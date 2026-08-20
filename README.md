@@ -21,11 +21,11 @@
 | 层 | 语言/框架 | 关键依赖 | 存储 |
 |---|---|---|---|
 | 前端(用户入口) | Vue 3 + Vite | ECharts(知识图谱/指标面板)；无人力则降级 Streamlit | — |
-| Agent 层 | Python 3.12 | FastAPI · openai SDK · httpx · pydantic | SQLite(记忆库) |
-| 数据服务层 | Java 21 | Spring Boot 3.3.5 · WebClient · Jackson · Caffeine(缓存) | 无状态 |
+| Agent 层 | Python 3.12 | FastAPI · openai SDK · httpx · pydantic | SQLite(记忆库, FTS5 检索) |
+| 数据服务层 | Java 21 | Spring Boot 3.3.5 · **MVC + RestClient**(统一, 不混 WebClient) · Jackson · Caffeine(缓存) | 无状态 |
 | 采集器 | Python (纯标准库) | urllib · sqlite3(WAL) | SQLite(时间序列) |
 | 测试 | Python | pytest · pytest-asyncio | — |
-| 运维 | launchd/systemd(常驻) · sqlite3 .backup(备份) | — | — |
+| 运维 | launchd/systemd(常驻) · **Litestream**(SQLite 持续同步到对象存储) | — | — |
 | 环境/工具 | conda · Maven · Homebrew | — | — |
 
 **数据流**：`用户 → 前端(Vue/Streamlit) → Python Agent → Java 服务层 → 图书馆数据源 (OPAC / 座位系统)`
@@ -76,25 +76,25 @@ library-patch/
 |---|---|---|
 | ★ `llm.py` | LLMClient (兼容OpenAI协议) + Usage (token计量,04赛道成本指标) + available (判断key可用) + complete/complete_json | openai SDK |
 | ★ `planner.py` | Planner.plan()：有key时用记忆精炼查询 (如"只要近五年"→年份约束)，无key/无记忆时原样透传；异常降级不打断主流程 | LLM |
-| ★ `agent_loop.py` | AgentLoop：register_tool 注册工具；run()=检索记忆→规划(注入记忆)→调工具→组装结果(含耗时/token/记忆id)；record_feedback()=抽取→冲突处理→入库 | Python |
+| ★ `agent_loop.py` | AgentLoop：register_tool 注册工具；run()=检索记忆→规划(注入记忆)→调工具→组装结果(含耗时/token/记忆id/**trace_id**)；record_feedback()=**幂等**(按 user_id+反馈内容 hash 去重,防手快多点/网络重试重复入库)→抽取→冲突处理→入库 | Python |
 
 ### agent/memory/ — 反馈记忆核心 (护城河, 04赛道重点)
 
 | 待建文件 | 要实现什么 | 技术栈 |
 |---|---|---|
-| ★ `models.py` | MemoryType 枚举 (preference/rule/episode) + MemoryEntry (type/subject/content/applies_to/confidence/source/时间戳) | Python dataclass |
-| ★ `store.py` | MemoryStore over SQLite：建表 + add/query (按主题+适用范围过滤,置信度降序) + resolve_conflicts (同类矛盾旧记忆降权) + delete/all | SQLite |
-| ★ `retriever.py` | MemoryRetriever：retrieve (top_k + 置信度阈值双约束控token) + to_prompt_block (渲染成紧凑提示词块) | Python |
-| ★ `extractor.py` | MemoryExtractor：用LLM把一句反馈抽取0-3条结构化记忆 (JSON强制输出)，无key返回空，失败不打断 | LLM |
+| ★ `models.py` | MemoryType 枚举 (preference/rule/episode) + MemoryEntry (**user_id**(多用户隔离,趁数据少先加,后补是灾难)/type/subject/content/applies_to/confidence/source/dedup_hash(幂等去重)/created_at 时间戳(供衰减)) | Python dataclass + pydantic(校验) |
+| ★ `store.py` | MemoryStore over SQLite：建表(**含 FTS5 虚拟表**) + add(带 dedup_hash 幂等) + query(**FTS5 全文检索**替代 LIKE + 按 user_id 隔离 + 适用范围过滤 + **时间衰减**:新记忆权重高,旧的按 created_at 衰减,"上周喜欢靠窗"不能永远压过"昨天喜欢靠门") + resolve_conflicts(同类矛盾旧记忆降权) + delete/all | SQLite + FTS5 |
+| ★ `retriever.py` | MemoryRetriever：retrieve (**按 user_id 隔离** + top_k + 置信度阈值 + 衰减后综合得分 排序控token) + to_prompt_block (渲染成紧凑提示词块) | Python |
+| ★ `extractor.py` | MemoryExtractor：用LLM把一句反馈抽取0-3条结构化记忆；**走 JSON mode + pydantic 校验**,不裸解析文本;**校验失败重试一次再丢弃**(别让解析残渣混进记忆库,洗都洗不干净);无key返回空,失败不打断 | LLM + pydantic |
 
 ### agent/features/ — 三个功能 (共享记忆闭环)
 
 | 待建文件 | 要实现什么 | 技术栈 |
 |---|---|---|
-| ★ `findbook/service.py` | P0找书：注册 search_books 工具(调Java层)，find() 走 agent 循环(query_key=query 走记忆注入)，feedback() 沉淀记忆 | httpx → Java 层 |
+| ★ `findbook/service.py` | P0找书：注册 search_books 工具(调Java层)，find() 走 agent 循环(query_key=query 走记忆注入, 透传 user_id + trace_id)，feedback() 幂等沉淀记忆 | httpx → Java 层 |
 | ☆ `knowledge_map/semantic_scholar.py` | S2 Graph API 客户端：search / paper / references(展平citedPaper)，带 429 指数退避 | httpx |
 | ☆ `knowledge_map/service.py` | P1知识地图：build_citation_graph 工具(接S2,无需LLM) + summarize_paper 工具(接LLM,按记忆的阅读风格生成摘要) | LLM + Semantic Scholar |
-| ○ `seat_predict/service.py` | P2座位预测：predict_seats 工具，读采集库按 weekday+时段的历史平均占用率排序推荐；feedback() 纠错入记忆 | SQLite |
+| ○ `seat_predict/service.py` | P2座位预测：predict_seats 工具，**先做笨基线**——同 weekday+同时段历史平均占用率排序推荐(稳、可解释、先上线顶着,日后还能当模型对照组),别急着上模型；读采集库连接设 busy_timeout；feedback() 纠错入记忆 | SQLite |
 
 ### agent/benchmark/ — 04赛道 FOCUS 指标
 
@@ -117,16 +117,16 @@ library-patch/
 
 | 待建文件 | 要实现什么 | 技术栈 |
 |---|---|---|
-| ★ `pom.xml` | Spring Boot 父POM + spring-web + spring-webflux 依赖 | Maven |
+| ★ `pom.xml` | Spring Boot 父POM + spring-web(**MVC, 用 RestClient 不用 WebClient/webflux**, 避免混栈藏 .block()) + spring-cache + caffeine | Maven |
 | ★ `LibraryPatchApplication.java` | Spring Boot 入口 | Spring Boot |
 | ★ `application.yml` | 数据源配置：OPAC/座位 base-url、超时、libid | YAML |
-| ★ `opac/OpacClient.java` | OPAC 检索客户端(WebClient POST)，解析内嵌 holdings JSON | Spring WebClient |
+| ★ `opac/OpacClient.java` | OPAC 检索客户端(**RestClient** POST)，解析内嵌 holdings JSON；**重试分错误类型**:超时可重试、4xx 不重试、429/5xx 才退避(一股脑退避只会放大故障) | Spring RestClient |
 | ★ `opac/Book.java` | 书目 DTO (title/author/isbn/publisher/pubYear/classNo/callNos/holdings) | Java record |
 | ★ `opac/Holding.java` | 馆藏 DTO (callNo/location/status/available/barCode) | Java record |
-| ☆ `seat/SeatClient.java` | 座位占用客户端(WebClient GET)，GBK 解码，解析区域名的 x/y 占用 | Spring WebClient |
+| ☆ `seat/SeatClient.java` | 座位占用客户端(**RestClient** GET)，**强制按 GBK 解码**(别信响应头 charset,老 ASP 站点经常标错)，解析区域名的 x/y 占用 | Spring RestClient |
 | ☆ `seat/SeatArea.java` | 区域占用 DTO (mapId/areaName/libCode/total/free/occupied) | Java record |
-| ★ `web/BookController.java` | GET /api/books/search?q=&page=&pageSize= | Spring MVC |
-| ☆ `web/SeatController.java` | GET /api/seats/now | Spring MVC |
+| ★ `web/BookController.java` | GET /api/books/search?q=&page=&pageSize=；透传/回传 trace_id | Spring MVC |
+| ☆ `web/SeatController.java` | GET /api/seats/now；透传/回传 trace_id | Spring MVC |
 | `env.sh` | 锁定 JAVA_HOME 到 Java 21 | Shell |
 | ○ Java 单测 | OpacClient / SeatClient 解析测试 | JUnit |
 
@@ -137,7 +137,7 @@ library-patch/
 
 | 待建文件 | 要实现什么 | 技术栈 |
 |---|---|---|
-| ★ `seat_collector.py` | 定时抓区域级(GetSeatCount) + 单座级(GetSeatList)占用，GBK解码，存 SQLite；once/loop 两种模式，循环里任何异常不中断 | Python 标准库 |
+| ★ `seat_collector.py` | 定时抓区域级(GetSeatCount) + 单座级(GetSeatList)占用，**强制 GBK 解码**，存 SQLite(建库设 WAL)；once/loop 两种模式，循环里任何异常不中断；**抓取失败与"真没数据"必须分开存**(网络抖一下不能被模型当成"这个点没人",历史一旦污染洗不回来)；**时区写死 Asia/Shanghai** | Python 标准库 |
 
 ### docs/ — 文档
 
@@ -181,13 +181,32 @@ library-patch/
 ### 5. 不可再生数据的备份
 
 - `seats.db`（座位时间序列）和 `memory.db`（用户记忆）都是靠时间攒出来的，`.gitignore` 忽略后仓库里没有任何副本——一旦误删/损坏就永久丢失，且赛期无法重来。
-- **待加**：定时 `sqlite3 .backup` 到带时间戳的备份文件（另存目录或外部盘），如每日一次；备份文件同样不进 git，但**必须有明确落盘位置**并在 README 写明。座位库尤其关键——它只增不减且不可回补。
+- **首选 Litestream**：把 SQLite 持续同步到对象存储（S3/兼容），比定时 `cp`/`.backup` 靠谱——它是流式增量复制，崩溃点可恢复，几乎不丢数据。
+- **退路**：没对象存储就定时 `sqlite3 .backup` 到带时间戳文件（另存目录或外部盘）。备份不进 git，但**必须有明确落盘位置**并在 README 写明。座位库尤其关键——只增不减且不可回补。
 
 ### 6. 用户入口（用户到底从哪儿用）★ 现在完全缺失
 
 - 目前只有 REST API（agent :8000 / service :8080），**没有任何人能真正"用"这个产品**。演示时也需要一个可见入口。
 - **方案**：`web/` 前端 —— Vue 3 + Vite + ECharts（对话式找书界面 / 知识地图关系图可视化 / 座位占用+指标面板）。无前端人力则降级用 **Streamlit** 快速出一个能演示的界面。
 - **待建**：`web/` 目录（前端）。这是 P0 能否被"体验"的前提，别等到最后。
+
+### 7. 反馈入环的幂等（防重复强化）
+
+- 用户手快多点两下、或网络重试，同一条反馈会进两遍——记忆被重复强化，后面的冲突降权也被带歪。
+- **必须**：`record_feedback` 幂等。按 `user_id + 反馈内容` 算 dedup_hash，入库前查重，命中即跳过。
+- **待加**：`agent_loop.record_feedback` 的去重逻辑；`memory` 表 dedup_hash 字段 + 唯一索引。
+
+### 8. 多用户隔离（趁数据少赶紧加）
+
+- 若系统多人用，记忆必须按用户隔离——否则 A 的偏好污染 B 的结果。
+- **趁现在数据少，加个 `user_id` 字段就行；等数据攒起来再改是灾难**（要洗历史数据 + 迁移）。
+- **待加**：`MemoryEntry.user_id`；`store.query` / `retriever.retrieve` 全部按 user_id 过滤。
+
+### 9. 跨层链路追踪（trace id）
+
+- 排查"找书失败"时，若两边日志没有关联 id，只能肉眼对时间戳，极其痛苦。
+- **必须**：agent 生成 trace_id，随请求头传给 Java 层，两边日志都打这个 id。
+- **待加**：`service_client` 注入 `X-Trace-Id` 头；Java 侧过滤器读入并放进 MDC/日志。
 
 ---
 
@@ -203,7 +222,7 @@ library-patch/
 
 ### 座位系统（公网可达，无需 VPN）
 
-- 供应商 360banke/晓图，base = https://www.360banke.com/xiaotu/，libid=dlut，GBK 编码。
+- 供应商 360banke/晓图，base = https://www.360banke.com/xiaotu/，libid=dlut，**GBK 编码——强制按 GBK 解，别信响应头 charset（老 ASP 站点常标错）**。
 - 区域级：GetSeatCount.asp?libid=dlut → maplist(楼层,含libcode) + maparea(区域, name 形如"301阅览室 143/143", ct=座位数)。
 - 单座级：GetSeatList.asp?libid=dlut&mapid=楼层id → seats[]，每座含 seatid/mappos/isbusy/seattype(电源、台灯)/seatnum/status。
 - 另有 SSE 实时流（seatlistsse/seatcountsse）。
@@ -226,9 +245,12 @@ library-patch/
 
 ## 七、实现优先级（按"能拿名次"排序）
 
-1. 配 LLM key → 点亮 planner / extractor / P1摘要（三处核心全靠它）
-2. P0 找书端到端 + 前端入口 → 让产品"能被体验"（含 web/ 最小界面）
-3. 横切关注点 → WAL、备份、采集器常驻，别等数据丢了才想起
+> ⚠️ 有几件事**必须在数据攒起来之前做**（改 schema/洗历史数据的代价随时间指数上升）：记忆表的 `user_id`(多用户隔离) + `dedup_hash`(幂等)、采集器"失败 vs 没数据"分开存、时区写死。这些排在功能之前。
+
+0. **数据模型的一次性决策（最优先，别拖）** → 记忆表 user_id + dedup_hash 字段；采集器失败/空值分离 + 时区 Asia/Shanghai。趁数据少，一行字段的事；攒起来再改是灾难。
+1. 配 LLM key → 点亮 planner / extractor / P1摘要（三处核心全靠它），extractor 走 JSON mode + pydantic 校验
+2. P0 找书端到端 + 前端入口 → 让产品"能被体验"（含 web/ 最小界面）；反馈入环做幂等
+3. 横切关注点 → WAL、Litestream 备份、采集器常驻、trace id，别等数据丢了/排查抓瞎才想起
 4. benchmark 跑批 → 04赛道要的真实指标数字
 5. 去图书馆访谈 → 01赛道要的"真实用户"证据
-6. 鉴权/缓存/分赛道材料 → 临近提交再补
+6. 鉴权/缓存/记忆衰减/分赛道材料 → 临近提交再补（衰减可后加，但检索先上 FTS5）
