@@ -1,0 +1,56 @@
+"""P1 知识地图功能。build_citation_graph 工具不需要 LLM，直接组装引用图；
+summarize_paper 工具只取回原始论文数据交给 planner/LLM 生成摘要
+(是否调用 LLM 是 agent_loop 内部的事，本类不关心)。
+"""
+from __future__ import annotations
+
+
+class KnowledgeMapService:
+    def __init__(self, agent_loop, s2_client, s2_cache):
+        self._agent_loop = agent_loop
+        self._s2 = s2_client
+        self._cache = s2_cache
+        self._agent_loop.register_tool("build_citation_graph", self._build_graph_tool)
+        self._agent_loop.register_tool("summarize_paper", self._summarize_tool)
+
+    async def _build_graph_tool(self, paper_id: str, trace_id: str) -> dict:
+        cache_key = f"references:{paper_id}"
+        cited = self._cache.get(cache_key)
+        if cited is None:
+            cited = await self._s2.references(paper_id)
+            self._cache.set(cache_key, cited)
+        nodes = [{"paperId": paper_id}] + cited
+        edges = [{"source": paper_id, "target": item["paperId"]} for item in cited]
+        return {"nodes": nodes, "edges": edges}
+
+    async def _summarize_tool(self, paper_id: str, trace_id: str) -> dict:
+        cache_key = f"paper:{paper_id}"
+        detail = self._cache.get(cache_key)
+        if detail is None:
+            detail = await self._s2.paper(paper_id)
+            self._cache.set(cache_key, detail)
+        return detail
+
+    async def build_graph(self, paper_id: str, user_id: str, trace_id: str):
+        return await self._agent_loop.run(
+            feature="knowledge_map",
+            subject="知识地图",
+            task=f"构建引用图: {paper_id}",
+            tool_name="build_citation_graph",
+            tool_args={"paper_id": paper_id, "trace_id": trace_id},
+            user_id=user_id,
+            trace_id=trace_id,
+            query_key=None,
+        )
+
+    async def summarize(self, paper_id: str, user_id: str, trace_id: str):
+        return await self._agent_loop.run(
+            feature="knowledge_map",
+            subject="知识地图",
+            task=f"摘要: {paper_id}",
+            tool_name="summarize_paper",
+            tool_args={"paper_id": paper_id, "trace_id": trace_id},
+            user_id=user_id,
+            trace_id=trace_id,
+            query_key=None,
+        )

@@ -254,3 +254,11 @@ library-patch/
 4. benchmark 跑批 → 04赛道要的真实指标数字
 5. 去图书馆访谈 → 01赛道要的"真实用户"证据
 6. 鉴权/缓存/记忆衰减/分赛道材料 → 临近提交再补（衰减可后加，但检索先上 FTS5）
+
+---
+
+## C 角色（粘合侧）当前状态
+
+- `agent/main.py`、`service_client.py`、三个 `features/*`、`benchmark/harness.py`、`web/` 已按接口契约实现并有测试覆盖。
+- `main.py` 中 `from agent.core.agent_loop import AgentLoop` 依赖 B 交付，B 完成前 `main.py` 无法真正启动（`agent/tests/` 下的单测通过依赖注入/替身规避此限制，已验证业务逻辑正确）。
+- `seat_predict/service.py` 假定 `seats.db` 存在表 `seat_snapshots(weekday, hour, area_name, occupied, total)`，此 schema 待与 A 确认；若字段不同，只需改 `agent/features/seat_predict/service.py` 中的一处 SQL。

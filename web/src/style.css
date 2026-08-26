@@ -1,0 +1,118 @@
+/* 大连理工大学 · 图书馆智慧服务 — 全局设计 token
+   严格遵循大工 VI。现代学术风:大工蓝主色、浅蓝辅色、大工红点缀。 */
+
+:root {
+  /* 大工 VI 色 */
+  --dut-blue: #003da5;
+  --dut-blue-bright: #0052cc;
+  --dut-blue-light: #e8f0fe;
+  --dut-red: #c8102e;
+  /* 中性色 */
+  --ink: #1a1a2e;
+  --ink-soft: #64748b;
+  --ink-muted: #94a3b8;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --line: #e2e8f0;
+  /* 状态色 */
+  --available: #16a34a;
+  --available-bg: #e7f6ec;
+  --unavailable: #94a3b8;
+  --unavailable-bg: #eef1f4;
+  /* 渐变 / 阴影 / 圆角 */
+  --grad-nav: linear-gradient(135deg, #003da5, #0052cc);
+  --shadow-sm: 0 2px 12px rgba(0, 61, 165, 0.08);
+  --shadow-hover: 0 10px 28px rgba(0, 61, 165, 0.18);
+  --radius: 12px;
+  --radius-lg: 16px;
+  /* 字阶(按规范:28 / 20 / 15) */
+  --fs-page: 28px;
+  --fs-module: 20px;
+  --fs-body: 15px;
+  --nav-h: 64px;
+
+  --font-body: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB",
+    "Source Han Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --measure: 1080px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--dut-blue);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--dut-blue);
+  color: #fff;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
