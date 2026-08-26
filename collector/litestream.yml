@@ -1,0 +1,10 @@
+# Litestream 持续备份配置。
+# 启动前设置：
+#   SEATS_DB_PATH      seats.db 的绝对路径
+#   SEATS_REPLICA_URL  备份目标，例如 s3://bucket/library-patch/seats
+# 对 S3/兼容对象存储，还需按供应商要求设置访问密钥、region、endpoint 等环境变量。
+
+dbs:
+  - path: ${SEATS_DB_PATH}
+    replicas:
+      - url: ${SEATS_REPLICA_URL}
