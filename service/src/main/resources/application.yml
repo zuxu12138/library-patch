@@ -1,0 +1,37 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: library-patch-service
+  cache:
+    type: caffeine
+    cache-names: opacSearch
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=300s   # OPAC 结果缓存 5 分钟
+
+# 图书馆数据源配置
+library:
+  opac:
+    # OPAC 检索接口 (需校园网/VPN); 尾斜杠必须有
+    base-url: https://opac.lib.dlut.edu.cn
+    search-path: /meta-local/opac/search/
+    index-name: idx.opac
+    timeout-ms: 15000
+    max-retries: 2          # 分类重试: 超时/429/5xx 才退避, 4xx 不重试
+  seat:
+    # 座位系统 (公网可达, GBK 编码)
+    base-url: https://www.360banke.com/xiaotu/
+    libid: dlut
+    timeout-ms: 10000
+
+# 内部鉴权 token (空则放行, 用于本地; 公网部署经环境变量注入)
+internal:
+  token: ${INTERNAL_TOKEN:}
+
+logging:
+  level:
+    cn.dlut.librarypatch: INFO
+  pattern:
+    # 日志带 traceId (从 MDC 取), 便于与 agent 侧串联
+    console: "%d{HH:mm:ss} [%X{traceId:-no-trace}] %-5level %logger{36} - %msg%n"
