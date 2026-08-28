@@ -1,86 +1,46 @@
 <script setup lang="ts">
-import { echarts, type ECharts } from "../charts";
-import { computed, nextTick, ref } from "vue";
-import { predictSeats, sendFeedback } from "../api/seat";
+import { computed, onMounted, ref } from "vue";
+import { predictSeats, sendFeedback, type SeatPrediction } from "../api/seat";
 import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
 import LoadingState from "../components/LoadingState.vue";
 
-const weekday = ref(1);
-const hour = ref(14);
+const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const now = new Date();
+const weekday = ref(now.getDay() === 0 ? 7 : now.getDay());
+const hour = ref(now.getHours());
 const loading = ref(false);
 const errorMessage = ref("");
-const realtimeAvailable = ref(true);
-const chartContainer = ref<HTMLDivElement | null>(null);
-const hasResult = ref(false);
+const prediction = ref<SeatPrediction | null>(null);
 const feedbackOpen = ref(false);
-let chart: ECharts | null = null;
 
-const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const weekdayLabel = computed(() => `周${WEEKDAYS[weekday.value - 1]}`);
+const isNow = computed(() => {
+  const d = new Date();
+  return weekday.value === (d.getDay() === 0 ? 7 : d.getDay()) && hour.value === d.getHours();
+});
+
+// 时间滑杆防抖 300ms
+let debounceTimer: number | undefined;
+function onTimeChange() {
+  window.clearTimeout(debounceTimer);
+  debounceTimer = window.setTimeout(() => predict(), 300);
+}
 
 async function predict() {
   loading.value = true;
   errorMessage.value = "";
-  hasResult.value = false;
   try {
-    const prediction = await predictSeats(weekday.value, hour.value);
-    realtimeAvailable.value = prediction.realtime_available;
-    hasResult.value = true;
-    await nextTick();
-    if (chartContainer.value) {
-      if (!chart) chart = echarts.init(chartContainer.value);
-      chart.setOption({
-        animationDuration: 600,
-        grid: { left: 48, right: 20, top: 24, bottom: 32 },
-        tooltip: { trigger: "axis", valueFormatter: (v: number) => `${v}%` },
-        xAxis: {
-          type: "category",
-          data: prediction.ranking.map((r) => r.area_name),
-          axisLabel: { color: "#64748b", fontSize: 12, interval: 0 },
-          axisLine: { lineStyle: { color: "#e2e8f0" } },
-          axisTick: { show: false },
-        },
-        yAxis: {
-          type: "value",
-          name: "占用率",
-          max: 100,
-          nameTextStyle: { color: "#64748b" },
-          axisLabel: { color: "#94a3b8", fontSize: 12, formatter: "{value}%" },
-          splitLine: { lineStyle: { color: "#f1f5f9" } },
-        },
-        series: [
-          {
-            type: "bar",
-            barWidth: "50%",
-            data: prediction.ranking.map((r) => ({
-              value: Math.round(r.avg_occupancy_rate * 100),
-              itemStyle: {
-                color:
-                  r.avg_occupancy_rate < 0.5
-                    ? "#16a34a"
-                    : r.avg_occupancy_rate < 0.8
-                      ? "#f59e0b"
-                      : "#c8102e",
-              },
-            })),
-            label: {
-              show: true,
-              position: "top",
-              color: "#64748b",
-              fontSize: 12,
-              formatter: "{c}%",
-            },
-          },
-        ],
-      });
-    }
+    prediction.value = await predictSeats(weekday.value, hour.value);
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "出了点问题，请稍后再试";
+    prediction.value = null;
   } finally {
     loading.value = false;
   }
 }
+
+onMounted(predict);
 
 async function submitFeedback(text: string) {
   return await sendFeedback(text);
@@ -88,39 +48,85 @@ async function submitFeedback(text: string) {
 </script>
 
 <template>
-  <section class="seat-predict">
+  <section class="seat">
     <header class="page-head">
       <h1 class="page-title">座位预测</h1>
-      <p class="page-sub">按历史占用率估算，越空的区域排越前</p>
+      <p class="page-sub">按历史规律与实时占用，挑一个最可能有位置的阅览室</p>
     </header>
 
-    <form @submit.prevent="predict" class="controls">
-      <label class="field">
-        <span class="field-label">星期</span>
-        <select v-model.number="weekday">
-          <option v-for="d in 7" :key="d" :value="d">周{{ WEEKDAYS[d - 1] }}</option>
-        </select>
-      </label>
-      <label class="field">
-        <span class="field-label">时段</span>
-        <input v-model.number="hour" type="number" min="0" max="23" step="1" />
-        <span class="field-unit">时</span>
-      </label>
-      <button type="submit" class="submit">预测</button>
-    </form>
+    <!-- 时间轴: 星期 + 24h 滑杆 -->
+    <div class="timeline">
+      <div class="weekdays" role="tablist" aria-label="星期">
+        <button
+          v-for="(w, i) in WEEKDAYS"
+          :key="w"
+          type="button"
+          role="tab"
+          class="weekday"
+          :class="{ active: weekday === i + 1 }"
+          :aria-selected="weekday === i + 1"
+          @click="weekday = i + 1; onTimeChange()"
+        >
+          {{ w }}
+        </button>
+      </div>
+      <div class="hour-row">
+        <input
+          v-model.number="hour"
+          type="range"
+          min="0"
+          max="23"
+          step="1"
+          class="hour-slider"
+          aria-label="小时"
+          @input="onTimeChange"
+        />
+        <span class="hour-label mono">{{ String(hour).padStart(2, "0") }}:00</span>
+      </div>
+      <p v-if="isNow" class="now-line-note">
+        <span class="now-mark" aria-hidden="true"></span>当前时刻 · {{ weekdayLabel }}
+      </p>
+    </div>
 
-    <LoadingState v-if="loading" />
+    <!-- 降级横幅: 实时数据不可用时 -->
+    <p v-if="prediction && !prediction.realtime_available" class="banner" role="status">
+      实时座位数据暂不可达，以下为纯历史预测
+    </p>
+
+    <LoadingState v-if="loading && !prediction" :rows="5" />
     <ErrorState v-else-if="errorMessage" :message="errorMessage" />
 
-    <template v-else-if="hasResult">
-      <div class="realtime-line">
-        <span class="lamp" :class="{ off: !realtimeAvailable }" aria-hidden="true"></span>
-        <span v-if="realtimeAvailable">已结合实时占用校正</span>
-        <span v-else>实时数据暂不可用，以下为历史平均占用率</span>
-      </div>
-      <div ref="chartContainer" class="chart" aria-label="各区域占用率条形图"></div>
-      <p class="hint">估算时段：{{ weekdayLabel }} {{ hour }}:00</p>
-    </template>
+    <ol v-else-if="prediction?.ranking.length" class="ranking">
+      <li
+        v-for="(r, i) in prediction.ranking"
+        :key="r.area_name"
+        class="rank-row rise-in"
+        :style="{ animationDelay: `${i * 50}ms` }"
+      >
+        <span class="rank-no mono">{{ String(i + 1).padStart(2, "0") }}</span>
+        <span v-if="i === 0" class="rec-badge">推荐</span>
+        <div class="rank-main">
+          <div class="rank-head">
+            <span class="area-name">{{ r.area_name.replace(/\s*\d+\/\d+\s*$/, "") }}</span>
+            <span v-if="r.free_now != null" class="free mono">当前空 {{ r.free_now }}/{{ r.total }}</span>
+          </div>
+          <div class="bar-track" role="img" :aria-label="`预测占用率 ${Math.round(r.avg_occupancy_rate * 100)}%`">
+            <div
+              class="bar-fill"
+              :class="{ hot: r.avg_occupancy_rate >= 0.6 }"
+              :style="{ width: `${Math.round(r.avg_occupancy_rate * 100)}%` }"
+            ></div>
+          </div>
+          <p v-if="r.samples < 4" class="low-samples">历史样本少（{{ r.samples }} 次），预测置信度低</p>
+        </div>
+        <span class="rate mono">{{ Math.round(r.avg_occupancy_rate * 100) }}%</span>
+      </li>
+    </ol>
+
+    <div v-else-if="prediction" class="empty-state">
+      <p class="empty-title">这个时段还没有数据</p>
+      <p class="empty-sub">采集器正在攒历史，换个时段试试</p>
+    </div>
 
     <FeedbackFab
       :open="feedbackOpen"
@@ -133,113 +139,254 @@ async function submitFeedback(text: string) {
 <style scoped>
 .page-head {
   text-align: center;
-  margin-bottom: 1.75rem;
+  margin-bottom: 2rem;
 }
 
 .page-title {
-  font-size: var(--fs-page);
+  font-family: var(--font-serif);
+  font-size: 2.25rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 0;
 }
 
 .page-sub {
-  margin: 0.4rem 0 0;
-  color: var(--ink-soft);
+  margin: 0.5rem 0 0;
+  color: var(--color-ink-soft);
+  font-size: 15px;
 }
 
-.controls {
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* 时间轴 */
+.timeline {
+  max-width: 640px;
+  margin: 0 auto 2rem;
+  padding: 1.25rem 1.5rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+}
+
+.weekdays {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.75rem 1.5rem;
-  align-items: flex-end;
-  margin-bottom: 1.5rem;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
 }
 
-.field {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.field-label {
+.weekday {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
   font-size: 14px;
-  color: var(--ink-soft);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 
-.field select,
-.field input {
-  padding: 0.5rem 0.65rem;
-  border: 1.5px solid var(--line);
-  border-radius: 8px;
-  background: var(--card);
+.weekday:hover {
+  color: var(--color-ink);
 }
 
-.field input {
-  width: 4.4rem;
-}
-
-.field select:focus,
-.field input:focus {
-  outline: none;
-  border-color: var(--dut-blue);
-  box-shadow: 0 0 0 3px rgba(0, 61, 165, 0.1);
-}
-
-.field-unit {
-  font-size: 14px;
-  color: var(--ink-muted);
-}
-
-.submit {
-  padding: 0.55rem 1.4rem;
-  border: none;
-  border-radius: 8px;
-  background: var(--dut-blue);
-  color: #fff;
-  font-size: var(--fs-body);
+.weekday.active {
+  color: var(--color-teal);
+  border-color: var(--color-teal);
   font-weight: 600;
-  transition: background 0.15s ease;
 }
 
-.submit:hover {
-  background: var(--dut-blue-bright);
-}
-
-.realtime-line {
+.hour-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  font-size: 14px;
-  color: var(--ink-soft);
+  gap: 1rem;
 }
 
-.lamp {
-  width: 0.5rem;
-  height: 0.5rem;
+.hour-slider {
+  flex: 1;
+  appearance: none;
+  height: 2px;
+  background: var(--color-line);
+  border-radius: 1px;
+  outline: none;
+}
+
+.hour-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: var(--available);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18);
+  background: var(--color-teal);
+  cursor: pointer;
+  border: 3px solid var(--color-card);
 }
 
-.lamp.off {
-  background: var(--unavailable);
-  box-shadow: none;
+.hour-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-teal);
+  cursor: pointer;
+  border: 3px solid var(--color-card);
 }
 
-.chart {
-  width: 100%;
-  height: 340px;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+.hour-label {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--color-teal);
+  min-width: 48px;
+  text-align: right;
 }
 
-.hint {
+.now-line-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin: 0.75rem 0 0;
-  text-align: center;
+  font-size: 12px;
+  color: var(--color-ink-muted);
+}
+
+.now-mark {
+  width: 1px;
+  height: 12px;
+  background: var(--color-teal);
+}
+
+/* 降级横幅 */
+.banner {
+  max-width: 640px;
+  margin: 0 auto 1.25rem;
+  padding: 0.6rem 1rem;
+  border: 1px dashed var(--color-seal);
+  border-radius: 2px;
+  color: var(--color-seal);
   font-size: 13px;
-  color: var(--ink-muted);
+  text-align: center;
+}
+
+/* 排名列表: 博物馆展签式 */
+.ranking {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 720px;
+}
+
+.rank-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.9rem 0.25rem;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.rank-no {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--color-ink-muted);
+  padding-top: 2px;
+  min-width: 24px;
+}
+
+.rec-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--color-seal);
+  border: 1px solid var(--color-seal);
+  border-radius: 2px;
+  padding: 0.1rem 0.4rem;
+  margin-top: 1px;
+}
+
+.rank-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rank-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.area-name {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.free {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
+.bar-track {
+  margin-top: 0.45rem;
+  height: 6px;
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--color-teal);
+  transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.bar-fill.hot {
+  background: var(--color-ink-muted);
+}
+
+.low-samples {
+  margin: 0.35rem 0 0;
+  font-size: 11.5px;
+  color: var(--color-ink-muted);
+}
+
+.rate {
+  flex-shrink: 0;
+  font-size: 15px;
+  color: var(--color-ink);
+  padding-top: 1px;
+  min-width: 42px;
+  text-align: right;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+}
+
+.empty-title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.empty-sub {
+  margin: 0.4rem 0 0;
+  color: var(--color-ink-soft);
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .page-title {
+    font-size: 1.7rem;
+  }
+  .rank-row {
+    gap: 0.6rem;
+  }
+  .rank-head {
+    flex-direction: column;
+    gap: 0.1rem;
+  }
 }
 </style>

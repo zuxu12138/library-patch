@@ -6,11 +6,10 @@ import { RouterLink, RouterView } from "vue-router";
   <header class="site-head">
     <div class="head-inner">
       <div class="brand">
-        <span class="brand-accent" aria-hidden="true"></span>
+        <span class="brand-rule" aria-hidden="true"></span>
         <span class="brand-name">
-          <strong>大连理工大学</strong>
-          <span class="brand-sep">·</span>
-          <span>图书馆智慧服务</span>
+          <strong>大连理工大学图书馆</strong>
+          <span class="brand-sub">智慧服务</span>
         </span>
       </div>
 
@@ -41,13 +40,8 @@ import { RouterLink, RouterView } from "vue-router";
   right: 0;
   z-index: 20;
   height: var(--nav-h);
-  background: linear-gradient(
-    135deg,
-    rgba(0, 61, 165, 0.94),
-    rgba(0, 82, 204, 0.94)
-  );
-  backdrop-filter: blur(8px);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  background: var(--color-paper);
+  border-bottom: 1px solid var(--color-line);
 }
 
 .head-inner {
@@ -64,72 +58,70 @@ import { RouterLink, RouterView } from "vue-router";
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
   min-width: 0;
 }
 
-.brand-accent {
+.brand-rule {
   flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--dut-red);
+  width: 3px;
+  height: 22px;
+  background: var(--color-teal);
 }
 
 .brand-name {
   display: flex;
   align-items: baseline;
-  gap: 0.4rem;
-  color: #fff;
+  gap: 0.55rem;
   white-space: nowrap;
 }
 
 .brand-name strong {
+  font-family: var(--font-serif);
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-ink);
 }
 
-.brand-sep {
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.brand-name > span:last-child {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+.brand-sub {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: var(--color-ink-muted);
 }
 
 .nav {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 1.75rem;
   flex-shrink: 0;
 }
 
 .nav-link {
   position: relative;
-  padding: 0.4rem 0.85rem;
-  color: rgba(255, 255, 255, 0.85);
+  padding: 0.3rem 0;
+  color: var(--color-ink-soft);
   font-size: 15px;
   white-space: nowrap;
+  text-decoration: none;
   transition: color 0.2s ease;
 }
 
 .nav-link::after {
   content: "";
   position: absolute;
-  left: 0.85rem;
-  right: 0.85rem;
-  bottom: 0;
+  left: 0;
+  right: 0;
+  bottom: -2px;
   height: 2px;
-  border-radius: 1px;
-  background: #fff;
+  background: var(--color-teal);
   transform: scaleX(0);
   transform-origin: left;
-  transition: transform 0.22s ease;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .nav-link:hover {
-  color: #fff;
+  color: var(--color-ink);
 }
 
 .nav-link:hover::after,
@@ -138,51 +130,35 @@ import { RouterLink, RouterView } from "vue-router";
 }
 
 .nav-link.router-link-active {
-  color: #fff;
+  color: var(--color-teal);
+  font-weight: 500;
 }
 
 .site-main {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: calc(var(--nav-h) + 2rem) 1.5rem 3.5rem;
+  padding: calc(var(--nav-h) + 2.5rem) 1.5rem 4rem;
+  min-height: calc(100vh - 120px);
 }
 
 .site-foot {
-  padding: 1.25rem 1.5rem 2.5rem;
+  padding: 1.5rem;
   text-align: center;
-  background: var(--card);
-  border-top: 1px solid var(--line);
-  color: var(--ink-muted);
-  font-size: 13px;
-}
-
-/* 页面切换 fade-in */
-.page-enter-active,
-.page-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-.page-enter-from {
-  opacity: 0;
-  transform: translateY(6px);
-}
-
-.page-leave-to {
-  opacity: 0;
+  border-top: 1px solid var(--color-line);
+  color: var(--color-ink-muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
 }
 
 @media (max-width: 640px) {
-  .brand-name > span:last-child {
-    display: none;
-  }
-  .brand-sep {
+  .brand-sub {
     display: none;
   }
   .head-inner {
     padding: 0 1rem;
   }
-  .nav-link {
-    padding: 0.4rem 0.6rem;
+  .nav {
+    gap: 1.1rem;
   }
 }
 </style>

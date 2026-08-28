@@ -27,7 +27,10 @@ class SemanticScholarClient:
         return body.get("data", [])
 
     async def paper(self, paper_id: str) -> dict:
-        return await self._get(f"/paper/{paper_id}", {"fields": "paperId,title,year,abstract,authors"})
+        return await self._get(
+            f"/paper/{paper_id}",
+            {"fields": "paperId,title,year,abstract,authors,openAccessPdf"},
+        )
 
     async def references(self, paper_id: str, limit: int = 20) -> list[dict]:
         body = await self._get(

@@ -30,10 +30,11 @@ async function submit(prefix: string) {
   errorMessage.value = "";
   try {
     const result = await props.onSubmit(feedbackText);
+    // 诚实提示: 未配置模型时明确告知不会被记住
     submittedHint.value =
       result && result.llm_available === false
         ? "已收到，但偏好记忆未启用（未配置模型），本次不会被记住"
-        : "已记录，谢谢反馈";
+        : "已记住，下次检索会按你的偏好调整";
     submitted.value = true;
     text.value = "";
     window.setTimeout(() => {
@@ -49,16 +50,17 @@ async function submit(prefix: string) {
 
 <template>
   <div class="feedback-fab">
-    <Transition name="panel">
+    <Transition name="note">
       <div v-if="open" class="panel" role="dialog" aria-label="意见反馈">
+        <div class="tear-line" aria-hidden="true"></div>
         <div class="panel-head">
-          <span>意见反馈</span>
+          <span class="panel-title">批注</span>
           <button type="button" class="close" aria-label="关闭" @click="emit('toggle')">×</button>
         </div>
-        <p class="panel-tip">这条结果准确吗？</p>
+        <p class="panel-tip">这条结果准确吗？你的反馈会成为下次检索的偏好。</p>
         <div class="thumbs">
-          <button type="button" class="thumb" :disabled="submitting" @click="submit('赞:')">👍 准确</button>
-          <button type="button" class="thumb" :disabled="submitting" @click="submit('差评:')">👎 不准确</button>
+          <button type="button" class="thumb" :disabled="submitting" @click="submit('赞:')">准确</button>
+          <button type="button" class="thumb" :disabled="submitting" @click="submit('差评:')">不准确</button>
         </div>
         <textarea
           v-model="text"
@@ -67,7 +69,7 @@ async function submit(prefix: string) {
           aria-label="补充说明"
         ></textarea>
         <button type="button" class="submit" :disabled="submitting" @click="submit('')">
-          提交反馈
+          提交批注
         </button>
         <p v-if="submitted" class="ok" role="status">{{ submittedHint }}</p>
         <p v-if="errorMessage" class="err" role="alert">{{ errorMessage }}</p>
@@ -82,7 +84,14 @@ async function submit(prefix: string) {
       aria-label="意见反馈"
       @click="emit('toggle')"
     >
-      <span aria-hidden="true">💬</span>
+      <svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">
+        <path
+          d="M4 20l1.2-4.2L16.5 4.5a2.1 2.1 0 0 1 3 3L8.2 18.8 4 20z"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linejoin="round"
+        />
+      </svg>
     </button>
   </div>
 </template>
@@ -99,40 +108,56 @@ async function submit(prefix: string) {
   gap: 0.75rem;
 }
 
+/* 悬浮墨点: 纯色圆点, 无阴影 */
 .fab {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  width: 44px;
+  height: 44px;
   border: none;
   border-radius: 50%;
-  background: var(--dut-blue);
+  background: var(--color-teal);
   color: #fff;
-  font-size: 24px;
-  box-shadow: 0 6px 20px rgba(0, 61, 165, 0.35);
-  transition: transform 0.2s ease, background 0.2s ease;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .fab:hover {
-  background: var(--dut-blue-bright);
+  background: var(--color-teal-deep);
   transform: translateY(-2px);
 }
 
+/* 便签纸面板 */
 .panel {
+  position: relative;
   width: 300px;
   max-width: calc(100vw - 2rem);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 40px rgba(0, 61, 165, 0.18);
-  padding: 1rem 1.1rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  padding: 1.25rem 1.25rem 1.1rem;
+}
+
+/* 撕边虚线 */
+.tear-line {
+  position: absolute;
+  top: 0.55rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  border-top: 1px dashed var(--color-line);
 }
 
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-top: 0.35rem;
+}
+
+.panel-title {
+  font-family: var(--font-serif);
   font-weight: 600;
+  font-size: 15px;
 }
 
 .close {
@@ -140,14 +165,16 @@ async function submit(prefix: string) {
   background: transparent;
   font-size: 22px;
   line-height: 1;
-  color: var(--ink-muted);
+  color: var(--color-ink-muted);
   padding: 0.1rem 0.3rem;
+  cursor: pointer;
 }
 
 .panel-tip {
-  margin: 0.5rem 0 0.5rem;
+  margin: 0.5rem 0 0.6rem;
   font-size: 13px;
-  color: var(--ink-soft);
+  color: var(--color-ink-soft);
+  line-height: 1.6;
 }
 
 .thumbs {
@@ -158,50 +185,56 @@ async function submit(prefix: string) {
 
 .thumb {
   flex: 1;
+  min-height: 44px;
   padding: 0.4rem 0.5rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  background: var(--color-paper);
   font-size: 13px;
-  color: var(--ink);
+  color: var(--color-ink);
+  cursor: pointer;
   transition: border-color 0.15s ease;
 }
 
 .thumb:hover:not(:disabled) {
-  border-color: var(--dut-blue);
+  border-color: var(--color-teal);
 }
 
 textarea {
   width: 100%;
+  box-sizing: border-box;
   padding: 0.5rem 0.6rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--card);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  background: var(--color-card);
   resize: vertical;
   font-size: 14px;
+  font-family: var(--font-sans);
 }
 
 textarea:focus {
   outline: none;
-  border-color: var(--dut-blue);
-  box-shadow: 0 0 0 3px rgba(0, 61, 165, 0.1);
+  border-color: var(--color-teal);
 }
 
 .submit {
   width: 100%;
+  min-height: 44px;
   margin-top: 0.6rem;
   padding: 0.45rem;
   border: none;
-  border-radius: 8px;
-  background: var(--dut-blue);
+  border-radius: 2px;
+  background: var(--color-teal);
   color: #fff;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  cursor: pointer;
   transition: background 0.15s ease;
 }
 
 .submit:hover:not(:disabled) {
-  background: var(--dut-blue-bright);
+  background: var(--color-teal-deep);
 }
 
 .submit:disabled,
@@ -212,24 +245,27 @@ textarea:focus {
 
 .ok {
   margin: 0.5rem 0 0;
-  color: var(--available);
+  color: var(--color-available);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .err {
   margin: 0.5rem 0 0;
-  color: var(--dut-red);
+  color: var(--color-seal);
   font-size: 13px;
 }
 
-.panel-enter-active,
-.panel-leave-active {
+/* 便签纸: 关闭时向内对折收起 */
+.note-enter-active,
+.note-leave-active {
   transition: opacity 0.18s ease, transform 0.18s ease;
+  transform-origin: bottom;
 }
 
-.panel-enter-from,
-.panel-leave-to {
+.note-enter-from,
+.note-leave-to {
   opacity: 0;
-  transform: translateY(8px) scale(0.97);
+  transform: scaleY(0);
 }
 </style>

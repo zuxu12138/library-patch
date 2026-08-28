@@ -1,18 +1,13 @@
 <script setup lang="ts">
+// 业务错误/网络异常展示: 图书馆语境文案由 api/client.ts 的错误码映射给出
 defineProps<{ message: string }>();
 </script>
 
 <template>
   <div class="error-state" role="alert">
-    <span class="icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
-        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
-        <line x1="12" y1="8" x2="12" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-        <circle cx="12" cy="16.5" r="1.2" fill="currentColor" />
-      </svg>
-    </span>
+    <span class="rule" aria-hidden="true"></span>
     <div class="text">
-      <strong>没有取到结果</strong>
+      <strong>暂时取不到</strong>
       <p>{{ message }}</p>
     </div>
   </div>
@@ -21,22 +16,21 @@ defineProps<{ message: string }>();
 <style scoped>
 .error-state {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.9rem;
   align-items: flex-start;
-  max-width: 600px;
+  max-width: 560px;
   margin: 0 auto;
-  padding: 1rem 1.15rem;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--dut-red);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  padding: 1rem 1.25rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
 }
 
-.icon {
+.rule {
   flex-shrink: 0;
-  color: var(--dut-red);
-  margin-top: 0.1rem;
+  width: 3px;
+  align-self: stretch;
+  background: var(--color-seal);
 }
 
 .text {
@@ -45,12 +39,15 @@ defineProps<{ message: string }>();
 
 .text strong {
   display: block;
+  font-family: var(--font-serif);
   font-size: 15px;
+  font-weight: 600;
 }
 
 .text p {
-  margin: 0.15rem 0 0;
+  margin: 0.2rem 0 0;
   font-size: 14px;
-  color: var(--ink-soft);
+  color: var(--color-ink-soft);
+  line-height: 1.6;
 }
 </style>
