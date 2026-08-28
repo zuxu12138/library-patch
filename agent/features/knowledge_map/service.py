@@ -13,7 +13,9 @@ class KnowledgeMapService:
         self._agent_loop.register_tool("build_citation_graph", self._build_graph_tool)
         self._agent_loop.register_tool("summarize_paper", self._summarize_tool)
 
-    async def _build_graph_tool(self, paper_id: str, trace_id: str) -> dict:
+    async def _build_graph_tool(self, tool_args: dict) -> dict:
+        # AgentLoop 契约: handler 接收 tool_args(dict), 见 agent/core/agent_loop.py
+        paper_id = tool_args["paper_id"]
         cache_key = f"references:{paper_id}"
         cited = self._cache.get(cache_key)
         if cited is None:
@@ -23,7 +25,8 @@ class KnowledgeMapService:
         edges = [{"source": paper_id, "target": item["paperId"]} for item in cited]
         return {"nodes": nodes, "edges": edges}
 
-    async def _summarize_tool(self, paper_id: str, trace_id: str) -> dict:
+    async def _summarize_tool(self, tool_args: dict) -> dict:
+        paper_id = tool_args["paper_id"]
         cache_key = f"paper:{paper_id}"
         detail = self._cache.get(cache_key)
         if detail is None:

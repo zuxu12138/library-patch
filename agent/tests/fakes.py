@@ -55,7 +55,7 @@ class FakeAgentLoop:
             )
         )
         tool_fn = self.tools[tool_name]
-        output = await tool_fn(**tool_args)
+        output = await tool_fn(tool_args)  # 与 AgentLoop 契约一致: handler 接收 tool_args(dict)
         if self.next_result is not None:
             result, self.next_result = self.next_result, None
             return result

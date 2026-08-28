@@ -8,8 +8,8 @@ from agent.tests.fakes import FakeAgentLoop, envelope_response
 async def test_fake_agent_loop_invokes_registered_tool():
     loop = FakeAgentLoop()
 
-    async def tool(x: int, trace_id: str) -> int:
-        return x * 2
+    async def tool(tool_args: dict) -> int:
+        return tool_args["x"] * 2
 
     loop.register_tool("double", tool)
 

@@ -22,3 +22,8 @@ service/src/main/resources/application-local.yml
 __pycache__/
 *.pyc
 *.pyo
+
+# --- 记忆库运行产物 ---
+agent/memory.db
+agent/memory.db-shm
+agent/memory.db-wal

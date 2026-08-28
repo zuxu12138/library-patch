@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import Depends, FastAPI, Header, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from agent import config
@@ -15,6 +16,14 @@ from agent.features.seat_predict.service import SeatPredictService
 from agent.service_client import ServiceClient, ServiceError, ServiceUnavailable
 
 app = FastAPI(title="library-patch agent")
+
+# web/ 前端从 :5173 直连 :8000, 放开跨域 (本地/演示环境)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _service_client = ServiceClient(
     base_url=config.SERVICE_BASE_URL,
@@ -31,11 +40,18 @@ def _assemble_services() -> None:
     global _findbook_service, _knowledge_service, _seat_service, _agent_loop
     try:
         from agent.core.agent_loop import AgentLoop  # noqa: PLC0415
+        from agent.core.llm import LLMClient  # noqa: PLC0415
+        from agent.core.planner import Planner  # noqa: PLC0415
+        from agent.memory.extractor import MemoryExtractor  # noqa: PLC0415
+        from agent.memory.retriever import MemoryRetriever  # noqa: PLC0415
+        from agent.memory.store import MemoryStore  # noqa: PLC0415
     except ImportError:
         # B has not delivered agent.core yet; routes still function via dependency_overrides in tests.
         return
 
-    _agent_loop = AgentLoop()
+    llm = LLMClient(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY, model=config.LLM_MODEL)
+    store = MemoryStore(config.MEMORY_DB_PATH)
+    _agent_loop = AgentLoop(MemoryRetriever(store), Planner(llm), store, MemoryExtractor(llm))
     _findbook_service = FindBookService(_agent_loop, _service_client)
     _knowledge_service = KnowledgeMapService(_agent_loop, SemanticScholarClient(), S2Cache())
     _seat_service = SeatPredictService(

@@ -12,9 +12,15 @@ class FindBookService:
         self._service_client = service_client
         self._agent_loop.register_tool("search_books", self._search_books_tool)
 
-    async def _search_books_tool(self, query: str, page: int, page_size: int, trace_id: str) -> dict:
+    async def _search_books_tool(self, tool_args: dict) -> dict:
+        # AgentLoop 契约: handler 接收 tool_args(dict), 见 agent/core/agent_loop.py
         try:
-            return await self._service_client.search_books(query, page, page_size, trace_id)
+            return await self._service_client.search_books(
+                tool_args["query"],
+                tool_args.get("page", 1),
+                tool_args.get("page_size", 10),
+                tool_args["trace_id"],
+            )
         except (ServiceError, ServiceUnavailable):
             return {"error": "图书检索服务暂时不可用，请稍后再试"}
 

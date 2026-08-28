@@ -10,16 +10,16 @@ from agent.tests.fakes import FakeAgentLoop
 def _make_seats_db(path: str) -> None:
     conn = sqlite3.connect(path)
     conn.execute(
-        "CREATE TABLE seat_snapshots (weekday INTEGER, hour INTEGER, area_name TEXT, occupied INTEGER, total INTEGER)"
+        "CREATE TABLE area_snapshot (weekday INTEGER, hhmm TEXT, area_name TEXT, occupied INTEGER, total INTEGER)"
     )
     rows = [
-        (1, 14, "301阅览室", 140, 175),
-        (1, 14, "301阅览室", 120, 175),
-        (1, 14, "201文艺期刊阅览室", 30, 175),
-        (1, 14, "201文艺期刊阅览室", 50, 175),
+        (1, "14:05", "301阅览室", 140, 175),
+        (1, "14:35", "301阅览室", 120, 175),
+        (1, "14:05", "201文艺期刊阅览室", 30, 175),
+        (1, "14:35", "201文艺期刊阅览室", 50, 175),
     ]
     conn.executemany(
-        "INSERT INTO seat_snapshots (weekday, hour, area_name, occupied, total) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO area_snapshot (weekday, hhmm, area_name, occupied, total) VALUES (?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()

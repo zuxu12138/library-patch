@@ -2,8 +2,8 @@
 稳、可解释，先上线顶着，日后可当模型对照组。只读连接设 busy_timeout，
 不建表不设WAL(建库/WAL 是采集器/A 的职责)。
 
-⚠️ 假定表结构 seat_snapshots(weekday, hour, area_name, occupied, total)，
-未在接口契约中定义，需与 A 确认；若实际字段不同，只需改本文件 SQL。
+⚠️ 表结构以 A 的采集器为准: area_snapshot(weekday, hhmm, area_name, occupied, total),
+小时从 hhmm 前两位提取(如 "11:31" → 11)。
 """
 from __future__ import annotations
 
@@ -24,17 +24,19 @@ class SeatPredictService:
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
-    async def _predict_tool(self, weekday: int, hour: int, trace_id: str) -> dict:
+    async def _predict_tool(self, tool_args: dict) -> dict:
+        # AgentLoop 契约: handler 接收 tool_args(dict), 见 agent/core/agent_loop.py
+        weekday, hour, trace_id = tool_args["weekday"], tool_args["hour"], tool_args["trace_id"]
         conn = self._read_conn()
         try:
             rows = conn.execute(
                 """
                 SELECT area_name, AVG(occupied) AS avg_occupied, AVG(total) AS avg_total
-                FROM seat_snapshots
-                WHERE weekday = ? AND hour = ?
+                FROM area_snapshot
+                WHERE weekday = ? AND substr(hhmm, 1, 2) = ?
                 GROUP BY area_name
                 """,
-                (weekday, hour),
+                (weekday, f"{hour:02d}"),
             ).fetchall()
         finally:
             conn.close()
