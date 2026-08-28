@@ -1,5 +1,7 @@
 # 后续优化工作规划
 
+> **状态更新 (2026-08-28)**: 第一版已落地,Phase 0-3 大部分已由 Claude Code 执行完毕,详见 docs/optimization-report-2026-08-28.md。剩余: docker-compose/CI(Phase 4)、赛道材料(Phase 5)。
+
 > 本文档用于：等其他开发者按 `README.md` 蓝图完成第一版实现后，由优化方（Claude Code）接手进行系统性打磨。
 > 当前状态：仓库仍为蓝图阶段，各目录为空。
 
