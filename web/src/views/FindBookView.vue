@@ -182,6 +182,11 @@ async function submitFeedback(text: string) {
         「{{ lastQuery }}」共 <strong>{{ result.total }}</strong> 条 · 第 {{ page }} / {{ totalPages }} 页
       </p>
 
+      <!-- 记忆生效提示: 让用户感知"它记得我" -->
+      <p v-if="result.plan_note" class="plan-note" role="note">
+        <span class="plan-note-rule" aria-hidden="true"></span>{{ result.plan_note }}
+      </p>
+
       <ul v-if="result.books.length" class="book-grid">
         <li
           v-for="(book, i) in result.books"
@@ -361,6 +366,24 @@ async function submitFeedback(text: string) {
   color: var(--color-teal);
 }
 
+/* 记忆生效提示条 */
+.plan-note {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: -0.5rem 0 1.25rem;
+  font-size: 13px;
+  color: var(--color-teal);
+}
+
+.plan-note-rule {
+  flex-shrink: 0;
+  width: 18px;
+  height: 2px;
+  background: var(--color-teal);
+  transform: translateY(-3px);
+}
+
 /* 结果 */
 .result-meta {
   margin: 0 0 1.25rem;
@@ -386,13 +409,28 @@ async function submitFeedback(text: string) {
 
 /* 书架隐喻: hover 如抽出一本书 */
 .book-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--color-card);
   border: 1px solid var(--color-line);
   border-radius: 2px;
-  padding: 1.1rem 1.15rem;
+  padding: 1.1rem 1.15rem 1.5rem;
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease;
+}
+
+/* 编目卡底部的打孔 */
+.book-card::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
 }
 
 .book-card:hover {

@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance } from "axios";
+import { beginRequest, endRequest } from "./loading";
 
 export interface Envelope<T> {
   code: number;
@@ -22,8 +23,21 @@ export const http: AxiosInstance = axios.create({
 
 http.interceptors.request.use((request) => {
   request.headers["X-User-Id"] = getUserId();
+  beginRequest();
   return request;
 });
+
+// 任何请求结束(成功/失败)都归还计数, 驱动顶部进度细线
+http.interceptors.response.use(
+  (response) => {
+    endRequest();
+    return response;
+  },
+  (error) => {
+    endRequest();
+    return Promise.reject(error);
+  }
+);
 
 // 错误码 → 图书馆语境文案(设计规格强制映射, 禁止展示技术性报错原文)
 const ERROR_MESSAGES: Record<number, string> = {

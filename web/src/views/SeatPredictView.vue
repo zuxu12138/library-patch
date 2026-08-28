@@ -4,8 +4,15 @@ import { predictSeats, sendFeedback, type SeatPrediction } from "../api/seat";
 import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
 import LoadingState from "../components/LoadingState.vue";
+import SeatMapPanel from "../components/SeatMapPanel.vue";
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const LIB_NAMES: Record<string, string> = {
+  bochuan: "伯川",
+  lingxi: "令希",
+  panjin: "盘锦",
+  kaifaqu: "开发区",
+};
 const now = new Date();
 const weekday = ref(now.getDay() === 0 ? 7 : now.getDay());
 const hour = ref(now.getHours());
@@ -13,6 +20,31 @@ const loading = ref(false);
 const errorMessage = ref("");
 const prediction = ref<SeatPrediction | null>(null);
 const feedbackOpen = ref(false);
+const libFilter = ref(""); // "" = 全部
+const expandedMap = ref<string | null>(null); // 展开平面图的 area_name
+
+const libs = computed(() => {
+  const seen = new Set<string>();
+  for (const r of prediction.value?.ranking ?? []) {
+    if (r.lib_code) seen.add(r.lib_code);
+  }
+  return [...seen];
+});
+
+const filteredRanking = computed(() => {
+  const all = prediction.value?.ranking ?? [];
+  return libFilter.value ? all.filter((r) => r.lib_code === libFilter.value) : all;
+});
+
+// 全馆实时汇总
+const hallSummary = computed(() => {
+  const rows = (prediction.value?.ranking ?? []).filter((r) => r.free_now != null && r.total != null);
+  if (!rows.length) return null;
+  return {
+    free: rows.reduce((s, r) => s + (r.free_now ?? 0), 0),
+    total: rows.reduce((s, r) => s + (r.total ?? 0), 0),
+  };
+});
 
 const weekdayLabel = computed(() => `周${WEEKDAYS[weekday.value - 1]}`);
 const isNow = computed(() => {
@@ -30,6 +62,7 @@ function onTimeChange() {
 async function predict() {
   loading.value = true;
   errorMessage.value = "";
+  expandedMap.value = null;
   try {
     prediction.value = await predictSeats(weekday.value, hour.value);
   } catch (err) {
@@ -38,6 +71,11 @@ async function predict() {
   } finally {
     loading.value = false;
   }
+}
+
+function toggleMap(areaName: string, mapId: string | null) {
+  if (!mapId) return;
+  expandedMap.value = expandedMap.value === areaName ? null : areaName;
 }
 
 onMounted(predict);
@@ -93,12 +131,40 @@ async function submitFeedback(text: string) {
       实时座位数据暂不可达，以下为纯历史预测
     </p>
 
+    <!-- 全馆实时汇总 + 分馆筛选 -->
+    <div v-if="hallSummary" class="hall-bar">
+      <span class="hall-total">
+        全馆当前空位 <strong class="mono">{{ hallSummary.free }}</strong
+        ><span class="dim mono"> / {{ hallSummary.total }}</span>
+      </span>
+      <div class="lib-tabs" role="tablist" aria-label="分馆筛选">
+        <button
+          type="button"
+          class="lib-tab"
+          :class="{ active: libFilter === '' }"
+          @click="libFilter = ''"
+        >
+          全部
+        </button>
+        <button
+          v-for="lib in libs"
+          :key="lib"
+          type="button"
+          class="lib-tab"
+          :class="{ active: libFilter === lib }"
+          @click="libFilter = lib"
+        >
+          {{ LIB_NAMES[lib] ?? lib }}
+        </button>
+      </div>
+    </div>
+
     <LoadingState v-if="loading && !prediction" :rows="5" />
     <ErrorState v-else-if="errorMessage" :message="errorMessage" />
 
-    <ol v-else-if="prediction?.ranking.length" class="ranking">
+    <ol v-else-if="filteredRanking.length" class="ranking">
       <li
-        v-for="(r, i) in prediction.ranking"
+        v-for="(r, i) in filteredRanking"
         :key="r.area_name"
         class="rank-row rise-in"
         :style="{ animationDelay: `${i * 50}ms` }"
@@ -106,10 +172,18 @@ async function submitFeedback(text: string) {
         <span class="rank-no mono">{{ String(i + 1).padStart(2, "0") }}</span>
         <span v-if="i === 0" class="rec-badge">推荐</span>
         <div class="rank-main">
-          <div class="rank-head">
+          <button
+            type="button"
+            class="rank-head rank-head-btn"
+            :class="{ drillable: r.map_id }"
+            @click="toggleMap(r.area_name, r.map_id)"
+          >
             <span class="area-name">{{ r.area_name.replace(/\s*\d+\/\d+\s*$/, "") }}</span>
-            <span v-if="r.free_now != null" class="free mono">当前空 {{ r.free_now }}/{{ r.total }}</span>
-          </div>
+            <span class="rank-head-right">
+              <span v-if="r.free_now != null" class="free mono">当前空 {{ r.free_now }}/{{ r.total }}</span>
+              <span v-if="r.map_id" class="map-hint">{{ expandedMap === r.area_name ? "收起地图 ▴" : "座位平面图 ▾" }}</span>
+            </span>
+          </button>
           <div class="bar-track" role="img" :aria-label="`预测占用率 ${Math.round(r.avg_occupancy_rate * 100)}%`">
             <div
               class="bar-fill"
@@ -118,6 +192,14 @@ async function submitFeedback(text: string) {
             ></div>
           </div>
           <p v-if="r.samples < 4" class="low-samples">历史样本少（{{ r.samples }} 次），预测置信度低</p>
+
+          <!-- 座位平面图下钻 -->
+          <SeatMapPanel
+            v-if="expandedMap === r.area_name && r.map_id"
+            :map-id="r.map_id"
+            :area-name="r.area_name.replace(/\s*\d+\/\d+\s*$/, '')"
+            @close="expandedMap = null"
+          />
         </div>
         <span class="rate mono">{{ Math.round(r.avg_occupancy_rate * 100) }}%</span>
       </li>
@@ -253,6 +335,91 @@ async function submitFeedback(text: string) {
   width: 1px;
   height: 12px;
   background: var(--color-teal);
+}
+
+/* 全馆汇总 + 分馆 tab */
+.hall-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  max-width: 720px;
+  margin: 0 auto 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.hall-total {
+  font-size: 14px;
+  color: var(--color-ink-soft);
+}
+
+.hall-total strong {
+  font-size: 20px;
+  color: var(--color-teal);
+  font-weight: 600;
+}
+
+.hall-total .dim {
+  color: var(--color-ink-muted);
+  font-size: 13px;
+}
+
+.lib-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.lib-tab {
+  min-height: 36px;
+  padding: 0.25rem 0.8rem;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.lib-tab:hover {
+  color: var(--color-ink);
+}
+
+.lib-tab.active {
+  color: var(--color-teal);
+  border-color: var(--color-teal);
+}
+
+.rank-head-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: default;
+  font: inherit;
+  text-align: left;
+}
+
+.rank-head-btn.drillable {
+  cursor: pointer;
+}
+
+.rank-head-btn.drillable:hover .area-name {
+  color: var(--color-teal);
+}
+
+.rank-head-right {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.map-hint {
+  font-size: 11.5px;
+  color: var(--color-teal);
+  white-space: nowrap;
 }
 
 /* 降级横幅 */

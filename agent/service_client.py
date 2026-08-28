@@ -52,6 +52,9 @@ class ServiceClient:
     async def seats_now(self, trace_id: str) -> dict:
         return await self._get("/api/seats/now", {}, trace_id)
 
+    async def seats_map(self, map_id: str, trace_id: str) -> dict:
+        return await self._get("/api/seats/map", {"mapid": map_id}, trace_id)
+
     async def health(self, trace_id: str) -> dict:
         return await self._get("/api/health", {}, trace_id)
 

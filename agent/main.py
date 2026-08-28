@@ -131,7 +131,11 @@ async def findbook_search(
         user_id=user_id,
         trace_id=trace_id,
     )
-    return envelope(0, "ok", result.output if hasattr(result, "output") else result)
+    data = result.output if hasattr(result, "output") else result
+    # 透出 planner 的偏好说明, 让"记忆生效"在 UI 上可见(无 LLM/无记忆时为空串)
+    if isinstance(data, dict):
+        data = {**data, "plan_note": getattr(result, "plan_note", "") or ""}
+    return envelope(0, "ok", data)
 
 
 @app.post("/findbook/feedback")
@@ -143,6 +147,14 @@ async def findbook_feedback(
 ):
     ids = await service.feedback(feedback=body["feedback"], user_id=user_id, trace_id=trace_id)
     return envelope(0, "ok", {"memory_ids": ids, "llm_available": _llm_available()})
+
+
+@app.post("/knowledge/search")
+async def knowledge_search(
+    body: dict,
+    service: KnowledgeMapService = Depends(get_knowledge_service),
+):
+    return envelope(0, "ok", await service.search_papers(body["query"]))
 
 
 @app.post("/knowledge/graph")
@@ -178,6 +190,15 @@ async def seat_predict(
         weekday=body["weekday"], hour=body["hour"], user_id=user_id, trace_id=trace_id,
     )
     return envelope(0, "ok", result.output if hasattr(result, "output") else result)
+
+
+@app.post("/seat/map")
+async def seat_map(
+    body: dict,
+    trace_id: str = Depends(_trace_id),
+    service: SeatPredictService = Depends(get_seat_service),
+):
+    return envelope(0, "ok", await service.seat_map(body["map_id"], trace_id))
 
 
 @app.post("/seat/feedback")

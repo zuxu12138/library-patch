@@ -43,3 +43,12 @@ export interface PaperSummary {
 export async function summarizePaper(paperId: string): Promise<PaperSummary> {
   return unwrap(http.post("/knowledge/summarize", { paper_id: paperId }));
 }
+
+export interface PaperSearchResult {
+  papers: GraphNode[];
+  error?: string;
+}
+
+export async function searchPapers(query: string): Promise<PaperSearchResult> {
+  return unwrap(http.post("/knowledge/search", { query }));
+}

@@ -26,6 +26,7 @@ export interface FindBookResult {
   page: number;
   pageSize: number;
   books: Book[];
+  plan_note?: string; // 记忆生效时的偏好说明, 如"已按你的偏好只找近五年"
 }
 
 export async function searchBooks(query: string, page = 1, pageSize = 10): Promise<FindBookResult> {

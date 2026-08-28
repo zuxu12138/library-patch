@@ -47,4 +47,23 @@ class SeatClientTest {
     void emptyBytesYieldEmptyList() throws Exception {
         assertTrue(client.parse(new byte[0]).isEmpty());
     }
+
+    @Test
+    void parsesSeatListWithMapPositions() throws Exception {
+        String json = """
+                {"mapid":"2498","seats":[
+                  {"seatid":"A1","seatnum":"001","mappos":"5457,2379","isbusy":"false","seattype":"电源|台灯","status":"不可预约"},
+                  {"seatid":"A2","seatnum":"002","mappos":"5331,2442","isbusy":"true","seattype":"","status":"已占用"},
+                  {"seatid":"A3","seatnum":"003","mappos":"bad","isbusy":"false","seattype":"","status":""}
+                ]}
+                """;
+        List<SeatItem> seats = client.parseSeatList(json.getBytes(GBK));
+
+        assertEquals(2, seats.size()); // 坐标坏的座位不上图
+        assertEquals(5457, seats.get(0).x());
+        assertEquals(2379, seats.get(0).y());
+        assertFalse(seats.get(0).busy());
+        assertTrue(seats.get(1).busy());
+        assertEquals("电源|台灯", seats.get(0).seatType());
+    }
 }

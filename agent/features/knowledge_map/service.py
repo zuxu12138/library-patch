@@ -46,6 +46,14 @@ class KnowledgeMapService:
             self._cache.set(cache_key, detail)
         return detail
 
+    async def search_papers(self, query: str, limit: int = 8) -> dict:
+        """关键词找论文(用户不知道 paperId 时的入口)。限流降级为空列表+error。"""
+        try:
+            results = await self._s2.search(query, limit=limit)
+        except httpx.HTTPError:
+            return {"papers": [], "error": _S2_ERROR_MSG}
+        return {"papers": results}
+
     async def build_graph(self, paper_id: str, user_id: str, trace_id: str):
         return await self._agent_loop.run(
             feature="knowledge_map",

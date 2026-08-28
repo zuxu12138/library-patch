@@ -88,6 +88,52 @@ public class SeatClient {
         return areas;
     }
 
+    /** 拉取某楼层的单座级实时状态(含平面图坐标)。失败抛 SeatException。 */
+    public List<SeatItem> seatMap(String mapId) {
+        try {
+            byte[] bytes = rest.get()
+                    .uri("Seatresv/GetSeatList.asp?libid={id}&mapid={mid}", libid, mapId)
+                    .retrieve()
+                    .body(byte[].class);
+            return parseSeatList(bytes);
+        } catch (SeatException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("单座查询失败 mapid={}: {}", mapId, e.toString());
+            throw new SeatException("单座查询失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** 包私有以便 JUnit 直接测解析逻辑。 */
+    List<SeatItem> parseSeatList(byte[] bytes) throws Exception {
+        List<SeatItem> seats = new ArrayList<>();
+        if (bytes == null || bytes.length == 0) {
+            return seats;
+        }
+        JsonNode root = mapper.readTree(new String(bytes, GBK));
+        for (JsonNode s : root.path("seats")) {
+            // mappos 形如 "5457,2379", 解析失败丢 (0,0) 外 —— 直接跳过, 别把座位画到原点上
+            String[] pos = s.path("mappos").asText("").split(",");
+            if (pos.length != 2) {
+                continue;
+            }
+            try {
+                seats.add(new SeatItem(
+                        s.path("seatid").asText(""),
+                        s.path("seatnum").asText(""),
+                        Integer.parseInt(pos[0].trim()),
+                        Integer.parseInt(pos[1].trim()),
+                        "true".equalsIgnoreCase(s.path("isbusy").asText("")),
+                        s.path("seattype").asText(""),
+                        s.path("status").asText("")
+                ));
+            } catch (NumberFormatException ignored) {
+                // 坐标坏了的座位不上图
+            }
+        }
+        return seats;
+    }
+
     /** 从区域名 "301阅览室 143/143" 解析空闲数；解析不到按满座（free=0）。 */
     private int parseFree(String name, int total) {
         if (name != null && name.contains("/")) {

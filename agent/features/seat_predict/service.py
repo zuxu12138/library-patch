@@ -84,6 +84,9 @@ class SeatPredictService:
                 "samples": h["samples"] if h else 0,
                 "free_now": rt.get("free") if rt else None,
                 "total": rt.get("total") if rt else None,
+                # 楼层 id / 馆代码, 供前端下钻座位平面图与分馆筛选
+                "map_id": rt.get("mapId") if rt else None,
+                "lib_code": rt.get("libCode") if rt else None,
             })
         ranking.sort(key=lambda item: item["avg_occupancy_rate"])
 
@@ -100,6 +103,10 @@ class SeatPredictService:
             trace_id=trace_id,
             query_key=None,
         )
+
+    async def seat_map(self, map_id: str, trace_id: str) -> dict:
+        """单座级实时平面图(纯数据透传, 不经记忆闭环)。"""
+        return await self._service_client.seats_map(map_id, trace_id)
 
     async def feedback(self, feedback: str, user_id: str, trace_id: str) -> list[str]:
         return await self._agent_loop.record_feedback(
