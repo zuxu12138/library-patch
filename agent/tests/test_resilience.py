@@ -115,3 +115,32 @@ async def test_feedback_without_llm_stores_nothing_and_stays_honest():
     ids = await loop.record_feedback("我喜欢靠窗", user_id="u1")
     assert ids == []
     assert store.query("u1") == []
+
+
+# ---------- S2 限流降级(不抛 500) ----------
+
+class _RateLimitedS2:
+    async def references(self, paper_id, limit=20):
+        import httpx
+        raise httpx.HTTPStatusError("429", request=None, response=None)
+
+    async def paper(self, paper_id):
+        import httpx
+        raise httpx.HTTPStatusError("429", request=None, response=None)
+
+
+@pytest.mark.asyncio
+async def test_knowledge_map_degrades_on_s2_rate_limit(tmp_path):
+    from agent.features.knowledge_map.s2_cache import S2Cache
+    from agent.features.knowledge_map.service import KnowledgeMapService
+    from agent.tests.fakes import FakeAgentLoop
+
+    service = KnowledgeMapService(FakeAgentLoop(), _RateLimitedS2(),
+                                  S2Cache(path=str(tmp_path / "c.json")))
+
+    graph = await service.build_graph("p1", user_id="u1", trace_id="t")
+    assert graph.output["nodes"] == []
+    assert "error" in graph.output
+
+    summary = await service.summarize("p1", user_id="u1", trace_id="t")
+    assert "error" in summary.output
