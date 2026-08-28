@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
@@ -42,19 +43,24 @@ public class OpacClient {
             @Value("${library.opac.base-url}") String baseUrl,
             @Value("${library.opac.search-path}") String searchPath,
             @Value("${library.opac.index-name}") String indexName,
+            @Value("${library.opac.timeout-ms}") int timeoutMs,
             @Value("${library.opac.max-retries}") int maxRetries) {
         this.searchPath = searchPath;
         this.indexName = indexName;
         this.maxRetries = maxRetries;
-        this.rest = RestClient.builder().baseUrl(baseUrl).build();
+        // 超时必须接线——配置里写了不代表生效，裸 RestClient 默认无超时,OPAC 卡死会拖垮线程池
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(timeoutMs);
+        factory.setReadTimeout(timeoutMs);
+        this.rest = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
     }
 
     /**
      * 检索馆藏。结果缓存 5 分钟（application.yml opacSearch），相同查询短期不重复打 OPAC。
-     * 解析失败返回空列表，绝不抛异常打断上层。
+     * 失败抛 OpacException——异常不进缓存,绝不让"OPAC 挂掉时的空结果"被缓存 5 分钟。
      */
     @Cacheable(cacheNames = "opacSearch", key = "#query + ':' + #page + ':' + #pageSize")
-    public List<Book> search(String query, int page, int pageSize) {
+    public BookSearchResult search(String query, int page, int pageSize) {
         // OPAC 真实检索结构：queryFieldList，field="all" 为全字段检索。裸 q 会返回全库不过滤。
         Map<String, Object> body = Map.of(
                 "page", page,
@@ -66,9 +72,11 @@ public class OpacClient {
         try {
             String raw = postWithRetry(body);
             return parse(raw);
+        } catch (OpacException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("OPAC 检索失败 query={}: {}", query, e.toString());
-            return List.of();
+            throw new OpacException("OPAC 检索失败: " + e.getMessage(), e);
         }
     }
 
@@ -111,21 +119,25 @@ public class OpacClient {
         }
     }
 
-    private List<Book> parse(String raw) throws Exception {
-        List<Book> books = new ArrayList<>();
+    /** 解析 OPAC 响应。包私有以便 JUnit 直接测解析逻辑。 */
+    BookSearchResult parse(String raw) throws Exception {
         if (raw == null || raw.isBlank()) {
-            return books;
+            throw new OpacException("OPAC 返回空响应", null);
         }
-        JsonNode list = mapper.readTree(raw).path("data").path("dataList");
+        JsonNode data = mapper.readTree(raw).path("data");
+        List<Book> books = new ArrayList<>();
+        JsonNode list = data.path("dataList");
         if (list.isArray()) {
             for (JsonNode n : list) {
                 books.add(toBook(n));
             }
         }
-        return books;
+        // total 优先取 actualTotal, 兜底 total, 都没有才退化为当前页条数
+        int total = data.path("actualTotal").asInt(data.path("total").asInt(books.size()));
+        return new BookSearchResult(total, books);
     }
 
-    private Book toBook(JsonNode n) {
+    Book toBook(JsonNode n) {
         List<String> callNos = new ArrayList<>();
         for (JsonNode c : n.path("callno")) {
             callNos.add(c.asText());
@@ -139,8 +151,8 @@ public class OpacClient {
         );
     }
 
-    /** holdings 是被转义的 JSON 字符串数组，需二次解析。 */
-    private List<Holding> parseHoldings(String holdingsJson) {
+    /** holdings 是被转义的 JSON 字符串数组，需二次解析。解析失败降级为空 holdings,不打断整本书。 */
+    List<Holding> parseHoldings(String holdingsJson) {
         List<Holding> result = new ArrayList<>();
         if (holdingsJson == null || holdingsJson.isBlank() || "[]".equals(holdingsJson)) {
             return result;

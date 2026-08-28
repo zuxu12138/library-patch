@@ -35,8 +35,7 @@ async function search() {
 }
 
 async function submitFeedback(text: string) {
-  await sendFeedback(text);
-  feedbackOpen.value = false;
+  return await sendFeedback(text);
 }
 </script>
 

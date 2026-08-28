@@ -60,3 +60,13 @@ class BenchmarkHarness:
         for key, value in report.items():
             lines.append(f"- {key}: {value}")
         return "\n".join(lines)
+
+    def save(self, path: str = "agent/benchmark/report.json") -> str:
+        """把报告持久化成 JSON(04 赛道指标留档), 返回文件路径。"""
+        import json
+        import time
+
+        payload = {"generated_epoch": int(time.time()), **self.report()}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        return path

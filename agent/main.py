@@ -52,6 +52,14 @@ def _assemble_services() -> None:
     llm = LLMClient(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY, model=config.LLM_MODEL)
     store = MemoryStore(config.MEMORY_DB_PATH)
     _agent_loop = AgentLoop(MemoryRetriever(store), Planner(llm), store, MemoryExtractor(llm))
+
+    # 启动配置摘要(隐藏 key), 便于现场确认配置是否生效
+    masked = (config.LLM_API_KEY[:4] + "***") if config.LLM_API_KEY else "(未配置,LLM 功能降级)"
+    print(
+        f"[config] SERVICE_BASE_URL={config.SERVICE_BASE_URL} "
+        f"LLM_BASE_URL={config.LLM_BASE_URL or '(openai 默认)'} LLM_MODEL={config.LLM_MODEL} "
+        f"LLM_API_KEY={masked} SEATS_DB={config.SEATS_DB_PATH} MEMORY_DB={config.MEMORY_DB_PATH}"
+    )
     _findbook_service = FindBookService(_agent_loop, _service_client)
     _knowledge_service = KnowledgeMapService(_agent_loop, SemanticScholarClient(), S2Cache())
     _seat_service = SeatPredictService(
@@ -75,6 +83,15 @@ def get_seat_service() -> SeatPredictService:
     if _seat_service is None:
         raise AgentError(60001, "service not ready (B layer pending)")
     return _seat_service
+
+
+def _llm_available() -> bool:
+    """LLM 是否可用——反馈接口据此告诉前端记忆是否真的沉淀了。"""
+    return bool(
+        _agent_loop is not None
+        and getattr(getattr(_agent_loop, "planner", None), "llm", None) is not None
+        and _agent_loop.planner.llm.available
+    )
 
 
 def _user_id(x_user_id: str | None = Header(default=None, alias="X-User-Id")) -> str:
@@ -125,7 +142,7 @@ async def findbook_feedback(
     service: FindBookService = Depends(get_findbook_service),
 ):
     ids = await service.feedback(feedback=body["feedback"], user_id=user_id, trace_id=trace_id)
-    return envelope(0, "ok", {"memory_ids": ids})
+    return envelope(0, "ok", {"memory_ids": ids, "llm_available": _llm_available()})
 
 
 @app.post("/knowledge/graph")
@@ -171,7 +188,7 @@ async def seat_feedback(
     service: SeatPredictService = Depends(get_seat_service),
 ):
     ids = await service.feedback(feedback=body["feedback"], user_id=user_id, trace_id=trace_id)
-    return envelope(0, "ok", {"memory_ids": ids})
+    return envelope(0, "ok", {"memory_ids": ids, "llm_available": _llm_available()})
 
 
 @app.post("/memory/feedback")
@@ -188,7 +205,7 @@ async def memory_feedback(
         task_context=body.get("task_context", ""),
         trace_id=trace_id,
     )
-    return envelope(0, "ok", {"memory_ids": ids})
+    return envelope(0, "ok", {"memory_ids": ids, "llm_available": _llm_available()})
 
 
 @app.get("/health")

@@ -14,7 +14,8 @@ export async function predictSeats(weekday: number, hour: number): Promise<SeatP
   return unwrap(http.post("/seat/predict", { weekday, hour }));
 }
 
-export async function sendFeedback(feedback: string): Promise<string[]> {
-  const result = await unwrap<{ memory_ids: string[] }>(http.post("/seat/feedback", { feedback }));
-  return result.memory_ids;
+import type { FeedbackResult } from "./findbook";
+
+export async function sendFeedback(feedback: string): Promise<FeedbackResult> {
+  return unwrap<FeedbackResult>(http.post("/seat/feedback", { feedback }));
 }

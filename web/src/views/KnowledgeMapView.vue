@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import * as echarts from "echarts";
+import { echarts, type ECharts } from "../charts";
 import { nextTick, ref } from "vue";
 import { buildGraph, summarizePaper } from "../api/knowledge";
 import ErrorState from "../components/ErrorState.vue";
@@ -13,7 +13,7 @@ const summary = ref<Record<string, unknown> | null>(null);
 const chartContainer = ref<HTMLDivElement | null>(null);
 const hasGraph = ref(false);
 const feedbackOpen = ref(false);
-let chart: echarts.ECharts | null = null;
+let chart: ECharts | null = null;
 
 async function loadGraph() {
   if (!paperId.value.trim()) return;
@@ -70,10 +70,9 @@ async function loadGraph() {
 
 async function submitFeedback(text: string) {
   const { http, unwrap } = await import("../api/client");
-  await unwrap(
+  return await unwrap<{ memory_ids: string[]; llm_available: boolean }>(
     http.post("/memory/feedback", { feedback: text, task_context: `知识地图:${paperId.value}` })
   );
-  feedbackOpen.value = false;
 }
 </script>
 

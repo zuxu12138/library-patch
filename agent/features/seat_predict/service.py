@@ -31,7 +31,8 @@ class SeatPredictService:
         try:
             rows = conn.execute(
                 """
-                SELECT area_name, AVG(occupied) AS avg_occupied, AVG(total) AS avg_total
+                SELECT area_name, AVG(occupied) AS avg_occupied, AVG(total) AS avg_total,
+                       COUNT(*) AS samples
                 FROM area_snapshot
                 WHERE weekday = ? AND substr(hhmm, 1, 2) = ?
                 GROUP BY area_name
@@ -41,20 +42,50 @@ class SeatPredictService:
         finally:
             conn.close()
 
-        ranking = [
-            {
-                "area_name": area_name,
-                "avg_occupancy_rate": (avg_occupied / avg_total) if avg_total else 0.0,
-            }
-            for area_name, avg_occupied, avg_total in rows
-        ]
-        ranking.sort(key=lambda item: item["avg_occupancy_rate"])
-
+        # 实时占用：拿来修正/兜底,不再只是标个布尔就扔
+        realtime: dict[str, dict] = {}
         realtime_available = True
         try:
-            await self._service_client.seats_now(trace_id)
+            now = await self._service_client.seats_now(trace_id)
+            for area in (now or {}).get("areas", []):
+                realtime[area.get("areaName", "")] = area
         except ServiceUnavailable:
             realtime_available = False
+        except Exception:
+            realtime_available = False
+
+        history: dict[str, dict] = {}
+        for area_name, avg_occupied, avg_total, samples in rows:
+            history[area_name] = {
+                "avg_occupancy_rate": (avg_occupied / avg_total) if avg_total else 0.0,
+                "samples": samples,
+            }
+
+        # 历史不足(采样点 < MIN_SAMPLES)时实时数据权重更高;
+        # 完全没有历史就纯按实时空闲排序——否则冷启动阶段推荐全是平手
+        MIN_SAMPLES = 4
+        names = set(history) | set(realtime)
+        ranking = []
+        for name in names:
+            h = history.get(name)
+            rt = realtime.get(name)
+            score = 0.0
+            if h and rt and rt.get("total"):
+                rt_rate = (rt["total"] - rt.get("free", 0)) / rt["total"]
+                w = min(1.0, h["samples"] / MIN_SAMPLES)  # 历史权重随采样点数增长
+                score = w * h["avg_occupancy_rate"] + (1 - w) * rt_rate
+            elif h:
+                score = h["avg_occupancy_rate"]
+            elif rt and rt.get("total"):
+                score = (rt["total"] - rt.get("free", 0)) / rt["total"]
+            ranking.append({
+                "area_name": name,
+                "avg_occupancy_rate": round(score, 4),
+                "samples": h["samples"] if h else 0,
+                "free_now": rt.get("free") if rt else None,
+                "total": rt.get("total") if rt else None,
+            })
+        ranking.sort(key=lambda item: item["avg_occupancy_rate"])
 
         return {"ranking": ranking, "realtime_available": realtime_available}
 

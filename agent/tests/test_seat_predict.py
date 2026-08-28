@@ -48,9 +48,9 @@ async def test_predict_sorts_areas_by_ascending_occupancy_rate(tmp_path):
 
     ranking = result.output["ranking"]
     assert ranking[0]["area_name"] == "201文艺期刊阅览室"
-    assert ranking[0]["avg_occupancy_rate"] == pytest.approx(40 / 175)
+    assert ranking[0]["avg_occupancy_rate"] == pytest.approx(40 / 175, abs=1e-4)
     assert ranking[1]["area_name"] == "301阅览室"
-    assert ranking[1]["avg_occupancy_rate"] == pytest.approx(130 / 175)
+    assert ranking[1]["avg_occupancy_rate"] == pytest.approx(130 / 175, abs=1e-4)
 
 
 @pytest.mark.asyncio

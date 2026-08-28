@@ -194,6 +194,15 @@ class MemoryStore:
 
     # ---------- 冲突处理 ----------
 
+    def adjust_confidence(self, entry_id: str, factor: float) -> bool:
+        """按 entry_id 精准调权（extractor 点名矛盾记忆时用）。返回是否命中。"""
+        cur = self._conn.execute(
+            "UPDATE memory SET confidence = confidence * ?, updated_at = ? WHERE entry_id = ?",
+            (factor, time.time(), entry_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def resolve_conflicts(
         self,
         user_id: str,

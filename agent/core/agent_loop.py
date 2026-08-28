@@ -51,8 +51,11 @@ class AgentLoop:
         trace_id = trace_id or self._new_trace_id()
         start = time.perf_counter()
 
-        # 1) 检索记忆（user_id 隔离 + 功能范围过滤）
-        memories = self.retriever.retrieve(user_id=user_id, subject=subject, applies_to=feature)
+        # 1) 检索记忆（user_id 隔离 + 功能范围过滤 + 按当前查询做 FTS 相关性召回）
+        query_text = str(tool_args[query_key]) if query_key and query_key in tool_args else None
+        memories = self.retriever.retrieve(
+            user_id=user_id, subject=subject, applies_to=feature, query_text=query_text
+        )
         memories_used = [m.entry_id for m in memories]
 
         tokens = 0
@@ -109,14 +112,19 @@ class AgentLoop:
             return existing
 
         subject = task_context.split(":", 1)[0].strip() if task_context else "通用"
+        # 把该用户已有记忆交给 extractor 判定矛盾,只降权被点名的——
+        # "喜欢靠窗"和"喜欢安静"不矛盾,不能互相降权。
+        # 不带 subject 过滤: 记忆主题由 extractor 归纳,与 task_context 前缀常不一致
+        existing = self.store.query(user_id)[:10]
         entries = await self.extractor.extract(
-            feedback, user_id=user_id, subject=subject, source=feedback, task_context=task_context
+            feedback, user_id=user_id, subject=subject, source=feedback,
+            task_context=task_context, existing=existing,
         )
         new_ids = []
         for e in entries:
             eid = self.store.add(e)
             new_ids.append(eid)
-            # 冲突处理：同类矛盾旧记忆降权
-            self.store.resolve_conflicts(user_id, e.type, e.subject, exclude_entry_id=eid)
+        for cid in getattr(self.extractor, "last_contradicts", []):
+            self.store.adjust_confidence(cid, factor=0.5)
         self.store.set_feedback_entry_ids(feedback_hash, new_ids)
         return new_ids

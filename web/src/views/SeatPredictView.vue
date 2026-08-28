@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import * as echarts from "echarts";
+import { echarts, type ECharts } from "../charts";
 import { computed, nextTick, ref } from "vue";
 import { predictSeats, sendFeedback } from "../api/seat";
 import ErrorState from "../components/ErrorState.vue";
@@ -14,7 +14,7 @@ const realtimeAvailable = ref(true);
 const chartContainer = ref<HTMLDivElement | null>(null);
 const hasResult = ref(false);
 const feedbackOpen = ref(false);
-let chart: echarts.ECharts | null = null;
+let chart: ECharts | null = null;
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const weekdayLabel = computed(() => `周${WEEKDAYS[weekday.value - 1]}`);
@@ -83,8 +83,7 @@ async function predict() {
 }
 
 async function submitFeedback(text: string) {
-  await sendFeedback(text);
-  feedbackOpen.value = false;
+  return await sendFeedback(text);
 }
 </script>
 

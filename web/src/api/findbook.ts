@@ -32,7 +32,11 @@ export async function searchBooks(query: string, page = 1, pageSize = 10): Promi
   return unwrap(http.post("/findbook/search", { query, page, page_size: pageSize }));
 }
 
-export async function sendFeedback(feedback: string): Promise<string[]> {
-  const result = await unwrap<{ memory_ids: string[] }>(http.post("/findbook/feedback", { feedback }));
-  return result.memory_ids;
+export interface FeedbackResult {
+  memory_ids: string[];
+  llm_available: boolean; // false 时反馈没有沉淀成记忆(未配置模型)
+}
+
+export async function sendFeedback(feedback: string): Promise<FeedbackResult> {
+  return unwrap<FeedbackResult>(http.post("/findbook/feedback", { feedback }));
 }

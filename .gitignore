@@ -27,3 +27,10 @@ __pycache__/
 agent/memory.db
 agent/memory.db-shm
 agent/memory.db-wal
+backups/
+agent/features/knowledge_map/.s2_cache.json
+agent/benchmark/report.json
+
+# vue-tsc build 产物
+*.tsbuildinfo
+src/**/*.vue.js

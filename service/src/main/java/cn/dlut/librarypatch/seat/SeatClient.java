@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -34,26 +35,37 @@ public class SeatClient {
 
     public SeatClient(
             @Value("${library.seat.base-url}") String baseUrl,
-            @Value("${library.seat.libid}") String libid) {
+            @Value("${library.seat.libid}") String libid,
+            @Value("${library.seat.timeout-ms}") int timeoutMs) {
         this.libid = libid;
-        this.rest = RestClient.builder().baseUrl(baseUrl).build();
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(timeoutMs);
+        factory.setReadTimeout(timeoutMs);
+        this.rest = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
     }
 
-    /** 拉取全部区域的实时占用。失败返回空列表，不抛异常。 */
+    /** 拉取全部区域的实时占用。失败抛 SeatException——空列表会被误读成"全校没人"。 */
     public List<SeatArea> areaOccupancy() {
         try {
             byte[] bytes = rest.get()
                     .uri("Seatresv/GetSeatCount.asp?libid={id}", libid)
                     .retrieve()
                     .body(byte[].class);
-            return parse(bytes);
+            List<SeatArea> areas = parse(bytes);
+            if (areas.isEmpty()) {
+                throw new SeatException("座位系统返回空数据", null);
+            }
+            return areas;
+        } catch (SeatException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("座位占用查询失败: {}", e.toString());
-            return List.of();
+            throw new SeatException("座位占用查询失败: " + e.getMessage(), e);
         }
     }
 
-    private List<SeatArea> parse(byte[] bytes) throws Exception {
+    /** 包私有以便 JUnit 直接测解析逻辑。 */
+    List<SeatArea> parse(byte[] bytes) throws Exception {
         List<SeatArea> areas = new ArrayList<>();
         if (bytes == null || bytes.length == 0) {
             return areas;

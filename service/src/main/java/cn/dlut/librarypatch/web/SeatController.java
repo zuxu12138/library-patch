@@ -3,6 +3,7 @@ package cn.dlut.librarypatch.web;
 import cn.dlut.librarypatch.common.ApiResponse;
 import cn.dlut.librarypatch.seat.SeatArea;
 import cn.dlut.librarypatch.seat.SeatClient;
+import cn.dlut.librarypatch.seat.SeatException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,10 +27,11 @@ public class SeatController {
     /** GET /api/seats/now */
     @GetMapping("/api/seats/now")
     public ApiResponse<Map<String, Object>> now() {
-        List<SeatArea> areas = seatClient.areaOccupancy();
-        if (areas.isEmpty()) {
-            return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "座位系统暂不可达");
+        try {
+            List<SeatArea> areas = seatClient.areaOccupancy();
+            return ApiResponse.ok(Map.of("count", areas.size(), "areas", areas));
+        } catch (SeatException e) {
+            return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "座位系统暂不可达，请稍后再试");
         }
-        return ApiResponse.ok(Map.of("count", areas.size(), "areas", areas));
     }
 }

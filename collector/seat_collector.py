@@ -77,7 +77,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_area_map  ON area_snapshot(mapid);
 
         CREATE TABLE IF NOT EXISTS seat_snapshot (
-            ts INTEGER, epoch INTEGER, weekday INTEGER, hhmm TEXT,
+            ts TEXT, epoch INTEGER, weekday INTEGER, hhmm TEXT,
             mapid TEXT, seatid TEXT, seatnum TEXT, seattype TEXT, isbusy INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_seat_map ON seat_snapshot(mapid, seatid);

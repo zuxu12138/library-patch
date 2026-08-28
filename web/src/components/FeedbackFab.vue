@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 
-const props = defineProps<{ open: boolean; onSubmit: (text: string) => Promise<void> }>();
+const props = defineProps<{
+  open: boolean;
+  onSubmit: (text: string) => Promise<{ llm_available?: boolean } | void>;
+}>();
 const emit = defineEmits<{ (e: "toggle"): void }>();
 
 const text = ref("");
 const submitted = ref(false);
+const submittedHint = ref("已记录，谢谢反馈");
 const submitting = ref(false);
 const errorMessage = ref("");
 
@@ -25,7 +29,11 @@ async function submit(prefix: string) {
   submitting.value = true;
   errorMessage.value = "";
   try {
-    await props.onSubmit(feedbackText);
+    const result = await props.onSubmit(feedbackText);
+    submittedHint.value =
+      result && result.llm_available === false
+        ? "已收到，但偏好记忆未启用（未配置模型），本次不会被记住"
+        : "已记录，谢谢反馈";
     submitted.value = true;
     text.value = "";
     window.setTimeout(() => {
@@ -61,7 +69,7 @@ async function submit(prefix: string) {
         <button type="button" class="submit" :disabled="submitting" @click="submit('')">
           提交反馈
         </button>
-        <p v-if="submitted" class="ok" role="status">已记录，谢谢反馈</p>
+        <p v-if="submitted" class="ok" role="status">{{ submittedHint }}</p>
         <p v-if="errorMessage" class="err" role="alert">{{ errorMessage }}</p>
       </div>
     </Transition>

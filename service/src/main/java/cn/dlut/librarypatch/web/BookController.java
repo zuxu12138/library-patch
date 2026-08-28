@@ -1,13 +1,13 @@
 package cn.dlut.librarypatch.web;
 
 import cn.dlut.librarypatch.common.ApiResponse;
-import cn.dlut.librarypatch.opac.Book;
+import cn.dlut.librarypatch.opac.BookSearchResult;
 import cn.dlut.librarypatch.opac.OpacClient;
+import cn.dlut.librarypatch.opac.OpacException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,13 +32,18 @@ public class BookController {
         if (query == null || query.isBlank()) {
             return ApiResponse.error(ApiResponse.ERR_BAD_REQUEST, "缺少查询参数 q");
         }
-        List<Book> books = opacClient.search(query, page, pageSize);
-        return ApiResponse.ok(Map.of(
-                "total", books.size(),
-                "page", page,
-                "pageSize", pageSize,
-                "books", books
-        ));
+        try {
+            BookSearchResult result = opacClient.search(query, page, pageSize);
+            return ApiResponse.ok(Map.of(
+                    "total", result.total(),
+                    "page", page,
+                    "pageSize", pageSize,
+                    "books", result.books()
+            ));
+        } catch (OpacException e) {
+            // 失败必须让调用方知道——空列表会被误读成"没查到"
+            return ApiResponse.error(ApiResponse.ERR_OPAC_TIMEOUT, "OPAC 检索服务暂时不可用，请稍后再试");
+        }
     }
 
     /** 健康检查 */
