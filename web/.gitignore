@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env.local
+
+# vue-tsc build 产物
+*.tsbuildinfo
+src/**/*.vue.js
+src/**/*.js

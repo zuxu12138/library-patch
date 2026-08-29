@@ -1,0 +1,94 @@
+/* 设计系统: Editorial Minimalism(见 UI 设计规格)
+   米白纸感 + 墨色文字;深青仅主按钮/激活/高亮;赭红仅推荐/PDF 角标(≤5% 面积);
+   无投影、无渐变、无玻璃拟态;1px #E6E6DF 分割线;圆角 ≤2px。 */
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #fafaf7;
+  --color-card: #ffffff;
+  --color-ink: #1c1c1a;
+  --color-ink-soft: #4a4a46;
+  --color-ink-muted: #8a8a82;
+  --color-line: #e6e6df;
+  --color-teal: #0f5c5c;
+  --color-teal-deep: #0a4444;
+  --color-seal: #b3413c;
+  --color-available: #2f6b3a;
+  --color-available-bg: #eef4ee;
+
+  --font-serif: "Fraunces", "Noto Serif SC", serif;
+  --font-sans: "Inter", "Noto Sans SC", -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --nav-h: 60px;
+  --measure: 72rem;
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+/* 尊重减少动效偏好: 过渡压至瞬时 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 骨架屏呼吸(禁用旋转 loading) */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.skeleton {
+  animation: breathe 1.6s ease-in-out infinite;
+  background: var(--color-line);
+  border-radius: 2px;
+}
+
+/* 页面切换: 180ms 交叉淡入(0.92→1, 不是 0→1) */
+.page-enter-active {
+  transition: opacity 0.18s ease;
+}
+.page-leave-active {
+  transition: opacity 0.12s ease;
+}
+.page-enter-from {
+  opacity: 0.92;
+}
+.page-leave-to {
+  opacity: 0.92;
+}
+
+/* 结果卡片逐张浮现 */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}

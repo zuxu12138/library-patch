@@ -34,6 +34,11 @@ DB_PATH = Path(__file__).parent / "data" / "seats.db"
 CN_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")  # 时区写死, 不随机器漂移
 DEFAULT_INTERVAL = 600
 
+# ===== 限流器(演示期省资源; 要全量采集时改这两个常量或删掉窗口判断即可) =====
+COLLECT_OPEN_HOURS = (7, 23)   # 只在开馆时段采集(Asia/Shanghai), 闭馆数据对预测没价值
+SEAT_EVERY_N_TICKS = 3         # 单座级每 N 个 tick 才采一次(一次 15 层请求,区域级每次都采)
+# ===========================================================================
+
 # 抓取结果状态 (失败 vs 没数据 必须分开)
 FETCH_OK = "ok"
 FETCH_FAIL = "fail"      # 网络/解析失败 —— 不代表没人, 预测时须剔除
@@ -77,7 +82,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_area_map  ON area_snapshot(mapid);
 
         CREATE TABLE IF NOT EXISTS seat_snapshot (
-            ts INTEGER, epoch INTEGER, weekday INTEGER, hhmm TEXT,
+            ts TEXT, epoch INTEGER, weekday INTEGER, hhmm TEXT,
             mapid TEXT, seatid TEXT, seatnum TEXT, seattype TEXT, isbusy INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_seat_map ON seat_snapshot(mapid, seatid);
@@ -211,8 +216,15 @@ def now_fields():
     }
 
 
-def collect_once(conn, with_seats=True):
+def collect_once(conn, with_seats=True, tick=0, respect_limits=False):
     now = now_fields()
+    if respect_limits:
+        hour = int(now["hhmm"][:2])
+        if not (COLLECT_OPEN_HOURS[0] <= hour < COLLECT_OPEN_HOURS[1]):
+            print(f"[{now['ts']}] 闭馆时段({COLLECT_OPEN_HOURS[0]}-{COLLECT_OPEN_HOURS[1]}点外), 跳过")
+            return 0, 0
+        if tick % SEAT_EVERY_N_TICKS != 0:
+            with_seats = False
     n_area = collect_areas(conn, now)
     n_seat = collect_seats(conn, now, list_mapids()) if with_seats else 0
     print(f"[{now['ts']}] 区域={n_area} 单座={n_seat}")
@@ -223,15 +235,18 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "once"
     conn = init_db()
     if mode == "once":
-        collect_once(conn, with_seats=True)
+        collect_once(conn, with_seats=True)  # 手动调试不受限流器约束
     elif mode == "loop":
         interval = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_INTERVAL
         print(f"采集器启动, 间隔 {interval}s, 写入 {DB_PATH}")
+        print(f"限流器: 开馆时段 {COLLECT_OPEN_HOURS[0]}-{COLLECT_OPEN_HOURS[1]}点, 单座每 {SEAT_EVERY_N_TICKS} tick")
+        tick = 0
         while True:
             try:
-                collect_once(conn, with_seats=True)
+                collect_once(conn, with_seats=True, tick=tick, respect_limits=True)
             except Exception as e:  # noqa: BLE001  循环里任何异常都不中断采集
                 print(f"[error] 采集异常: {e}", file=sys.stderr)
+            tick += 1
             time.sleep(interval)
     else:
         print(__doc__)

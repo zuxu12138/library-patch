@@ -16,3 +16,24 @@ service/src/main/resources/application-local.yml
 
 # --- 忽略系统文件 ---
 .DS_Store
+
+# --- Python ---
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+
+# --- 记忆库运行产物 ---
+agent/memory.db
+agent/memory.db-shm
+agent/memory.db-wal
+backups/
+agent/features/knowledge_map/.s2_cache.json
+agent/benchmark/report.json
+
+# vue-tsc build 产物
+*.tsbuildinfo
+src/**/*.vue.js
+
+# 本机 Maven 代理设置(个人环境, 不入库)
+service/settings-proxy.xml

@@ -3,7 +3,10 @@ package cn.dlut.librarypatch.web;
 import cn.dlut.librarypatch.common.ApiResponse;
 import cn.dlut.librarypatch.seat.SeatArea;
 import cn.dlut.librarypatch.seat.SeatClient;
+import cn.dlut.librarypatch.seat.SeatException;
+import cn.dlut.librarypatch.seat.SeatItem;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -26,10 +29,25 @@ public class SeatController {
     /** GET /api/seats/now */
     @GetMapping("/api/seats/now")
     public ApiResponse<Map<String, Object>> now() {
-        List<SeatArea> areas = seatClient.areaOccupancy();
-        if (areas.isEmpty()) {
-            return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "座位系统暂不可达");
+        try {
+            List<SeatArea> areas = seatClient.areaOccupancy();
+            return ApiResponse.ok(Map.of("count", areas.size(), "areas", areas));
+        } catch (SeatException e) {
+            return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "座位系统暂不可达，请稍后再试");
         }
-        return ApiResponse.ok(Map.of("count", areas.size(), "areas", areas));
+    }
+
+    /** GET /api/seats/map?mapid=2498 — 单座级实时平面图 */
+    @GetMapping("/api/seats/map")
+    public ApiResponse<Map<String, Object>> map(@RequestParam("mapid") String mapId) {
+        try {
+            List<SeatItem> seats = seatClient.seatMap(mapId);
+            if (seats.isEmpty()) {
+                return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "该楼层暂无座位数据");
+            }
+            return ApiResponse.ok(Map.of("mapId", mapId, "count", seats.size(), "seats", seats));
+        } catch (SeatException e) {
+            return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "座位系统暂不可达，请稍后再试");
+        }
     }
 }

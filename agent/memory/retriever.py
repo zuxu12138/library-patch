@@ -20,16 +20,29 @@ class MemoryRetriever:
         top_k: int = 5,
         min_confidence: float = 0.0,
     ) -> list:
-        """检索 top_k 条记忆：user_id 隔离 + 置信度阈值 + 衰减后综合得分排序(store 已排)。"""
-        entries = self.store.query(
-            user_id,
-            query_text=query_text,
-            applies_to=applies_to,
-            type=type,
-            subject=subject,
+        """检索 top_k 条记忆：user_id 隔离 + 置信度阈值 + 衰减后综合得分排序。
+
+        query_text 用于相关性**提权**而非过滤：偏好类记忆（如"只看近五年"）
+        与查询词（如"深度学习"）往往无字面重合，纯 FTS 过滤会把它们错杀。
+        做法：FTS 命中的排前面，其余按置信度×衰减排后，共同进入 top_k。
+        """
+        matched: list = []
+        if query_text:
+            matched = self.store.query(
+                user_id, query_text=query_text, applies_to=applies_to, type=type, subject=subject
+            )
+        scoped = self.store.query(
+            user_id, applies_to=applies_to, type=type, subject=subject
         )
-        entries = [e for e in entries if e.confidence >= min_confidence]
-        return entries[:top_k]
+        seen: set = set()
+        out: list = []
+        for e in matched + scoped:  # matched 优先,scoped 补齐
+            if e.entry_id in seen:
+                continue
+            seen.add(e.entry_id)
+            if e.confidence >= min_confidence:
+                out.append(e)
+        return out[:top_k]
 
     def to_prompt_block(self, entries) -> str:
         """把命中的记忆渲染成一段紧凑提示词，供 planner 注入。"""
