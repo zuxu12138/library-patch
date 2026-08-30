@@ -44,16 +44,39 @@ FETCH_OK = "ok"
 FETCH_FAIL = "fail"      # 网络/解析失败 —— 不代表没人, 预测时须剔除
 FETCH_EMPTY = "empty"    # 抓到了但确实无数据
 
+# 直连 opener(空 ProxyHandler = 不走任何代理)
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+# 直连能力探测缓存: 直连失败后 _DIRECT_BROKEN_UNTIL 之前不再每个请求先白等 15s 超时
+_DIRECT_BROKEN_UNTIL = 0.0
+_DIRECT_REPROBE_S = 300  # 5 分钟后重新探测直连是否恢复
+
+
 def http_get(url, timeout=15):
     """GET 请求。返回 (status, text)：
        status ∈ {FETCH_OK, FETCH_FAIL}。FETCH_FAIL 时 text 为 None。
-       强制 GBK 解码，不信响应头 charset。"""
+       强制 GBK 解码，不信响应头 charset。
+       Windows 系统代理(Clash 等)会被 urllib 自动读取并可能拦断座位接口
+       (SSL EOF)，因此直连优先；直连失败后缓存 5 分钟走系统代理，
+       避免每个请求都先白等一次直连超时。"""
+    global _DIRECT_BROKEN_UNTIL
     req = urllib.request.Request(url, headers={"User-Agent": UA})
+
+    direct_usable = time.time() >= _DIRECT_BROKEN_UNTIL
+    if direct_usable:
+        try:
+            with _DIRECT_OPENER.open(req, timeout=timeout) as resp:
+                raw = resp.read()
+            return FETCH_OK, raw.decode("gbk", errors="replace")
+        except (urllib.error.URLError, OSError):
+            _DIRECT_BROKEN_UNTIL = time.time() + _DIRECT_REPROBE_S
+            print(f"[warn] direct GET failed {url}, 系统代理兜底(直连冷却 {_DIRECT_REPROBE_S}s)",
+                  file=sys.stderr)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
         return FETCH_OK, raw.decode("gbk", errors="replace")
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+    except (urllib.error.URLError, OSError) as e:
         print(f"[warn] GET failed {url}: {e}", file=sys.stderr)
         return FETCH_FAIL, None
 
@@ -116,12 +139,12 @@ def parse_free_total(name):
 
 
 def log_fetch(conn, now, scope, status, detail=""):
-    """记录一次抓取状态。失败/空/成功分开存，预测时可据此剔除 FETCH_FAIL 时刻。"""
+    """记录一次抓取状态。失败/空/成功分开存，预测时可据此剔除 FETCH_FAIL 时刻。
+    不单独 commit——由调用方在 tick 结束时统一 commit, 减少 fsync 次数。"""
     conn.execute(
         "INSERT INTO fetch_log VALUES (?,?,?,?,?)",
         (now["ts"], now["epoch"], scope, status, detail),
     )
-    conn.commit()
 
 
 def collect_areas(conn, now):
@@ -142,7 +165,8 @@ def collect_areas(conn, now):
         log_fetch(conn, now, "area", FETCH_EMPTY, "no maparea")  # 抓到了但真没数据
         return 0
 
-    libmap = {m.get("mapid"): m.get("libcode") for m in data.get("maplist", [])}
+    # maplist 键统一用 mapid(与 id 同值, 已对照真实接口确认), 键转 str 防类型漂移
+    libmap = {str(m.get("mapid")): m.get("libcode") for m in data.get("maplist", [])}
     rows = []
     for a in areas:
         mapid = str(a.get("mapid"))
@@ -153,7 +177,7 @@ def collect_areas(conn, now):
         occupied = (total - free) if (total is not None and free is not None) else None
         rows.append((
             now["ts"], now["epoch"], now["weekday"], now["hhmm"],
-            libmap.get(int(mapid)) if mapid.isdigit() else None,
+            libmap.get(mapid),
             mapid, name, total, free, occupied,
         ))
     conn.executemany("INSERT INTO area_snapshot VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
@@ -163,7 +187,7 @@ def collect_areas(conn, now):
 
 
 def collect_seats(conn, now, mapids):
-    """采集单座级占用。每层抓取失败写 fetch_log，不静默跳过。"""
+    """采集单座级占用。每层抓取失败写 fetch_log，不静默跳过；整 tick 一次 commit。"""
     total_rows = 0
     for mapid in mapids:
         status, txt = http_get(f"{BASE}Seatresv/GetSeatList.asp?libid={LIBID}&mapid={mapid}")
@@ -181,21 +205,23 @@ def collect_seats(conn, now, mapids):
             continue
         rows = []
         for s in seats:
-            busy = 1 if str(s.get("isbusy")).lower() == "true" else 0
+            # isbusy 真实值是字符串 "true"/"false", 兼容 "1"/1 防接口字段漂移
+            busy = 1 if str(s.get("isbusy")).lower() in ("true", "1") else 0
             rows.append((
                 now["ts"], now["epoch"], now["weekday"], now["hhmm"],
                 str(mapid), s.get("seatid"), s.get("seatnum"),
                 s.get("seattype"), busy,
             ))
         conn.executemany("INSERT INTO seat_snapshot VALUES (?,?,?,?,?,?,?,?,?)", rows)
-        conn.commit()
         total_rows += len(rows)
         time.sleep(0.5)  # 对第三方接口温和一点
+    conn.commit()  # 整 tick 一次 commit: 15 层楼从 ~30 次 fsync 降为 1 次
     return total_rows
 
 
 def list_mapids():
-    """从区域接口拿全部楼层 mapid，用于单座采集。"""
+    """从区域接口拿全部楼层 mapid，用于单座采集。
+    键名与 collect_areas 统一用 mapid(真实接口 maplist 里 id 与 mapid 同值)。"""
     status, txt = http_get(f"{BASE}Seatresv/GetSeatCount.asp?libid={LIBID}")
     if status == FETCH_FAIL:
         return []
@@ -203,7 +229,7 @@ def list_mapids():
         data = json.loads(txt)
     except json.JSONDecodeError:
         return []
-    return sorted({str(m.get("id")) for m in data.get("maplist", []) if m.get("id")})
+    return sorted({str(m.get("mapid")) for m in data.get("maplist", []) if m.get("mapid")})
 
 
 def now_fields():
@@ -226,7 +252,12 @@ def collect_once(conn, with_seats=True, tick=0, respect_limits=False):
         if tick % SEAT_EVERY_N_TICKS != 0:
             with_seats = False
     n_area = collect_areas(conn, now)
-    n_seat = collect_seats(conn, now, list_mapids()) if with_seats else 0
+    mapids = list_mapids() if with_seats else []
+    if with_seats and n_area > 0 and not mapids:
+        # 区域接口成功但拿不到楼层列表: 单座采集会静默为 0, 必须留下痕迹
+        log_fetch(conn, now, "seat", FETCH_FAIL, "no mapids from area api")
+    n_seat = collect_seats(conn, now, mapids) if mapids else 0
+    conn.commit()
     print(f"[{now['ts']}] 区域={n_area} 单座={n_seat}")
     return n_area, n_seat
 
