@@ -19,6 +19,7 @@ library:
     index-name: idx.opac
     timeout-ms: 15000
     max-retries: 2          # 分类重试: 超时/429/5xx 才退避, 4xx 不重试
+    total-timeout-ms: 20000 # 重试总预算: 上游卡死时单请求最坏 ~20s, 不拖死 Tomcat 线程池
   seat:
     # 座位系统 (公网可达, GBK 编码)
     base-url: https://www.360banke.com/xiaotu/

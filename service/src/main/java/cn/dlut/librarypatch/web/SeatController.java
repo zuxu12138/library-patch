@@ -37,14 +37,13 @@ public class SeatController {
         }
     }
 
-    /** GET /api/seats/map?mapid=2498 — 单座级实时平面图 */
+    /** GET /api/seats/map?mapid=2498 — 单座级实时平面图。
+     *  空数据(该楼层暂无数据)不是故障: 返回 code=0 + 空列表,
+     *  50002 只留给真正的通信/解析故障——调用方据此区分"没数据"和"系统挂了"。 */
     @GetMapping("/api/seats/map")
     public ApiResponse<Map<String, Object>> map(@RequestParam("mapid") String mapId) {
         try {
             List<SeatItem> seats = seatClient.seatMap(mapId);
-            if (seats.isEmpty()) {
-                return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "该楼层暂无座位数据");
-            }
             return ApiResponse.ok(Map.of("mapId", mapId, "count", seats.size(), "seats", seats));
         } catch (SeatException e) {
             return ApiResponse.error(ApiResponse.ERR_SEAT_UNREACHABLE, "座位系统暂不可达，请稍后再试");

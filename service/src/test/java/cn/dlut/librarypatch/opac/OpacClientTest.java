@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class OpacClientTest {
 
-    private final OpacClient client = new OpacClient("http://unused", "/p/", "idx.opac", 15000, 0);
+    private final OpacClient client = new OpacClient("http://unused", "/p/", "idx.opac", 15000, 0, 20000);
 
     @Test
     void parseExtractsBooksTotalAndHoldings() throws Exception {

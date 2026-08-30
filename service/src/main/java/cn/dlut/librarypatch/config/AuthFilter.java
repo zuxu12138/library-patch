@@ -1,5 +1,7 @@
 package cn.dlut.librarypatch.config;
 
+import cn.dlut.librarypatch.common.ApiResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,6 +13,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * 契约共用 · 内部鉴权：校验 X-Internal-Token。
@@ -23,8 +27,11 @@ import java.io.IOException;
 public class AuthFilter extends OncePerRequestFilter {
 
     public static final String TOKEN_HEADER = "X-Internal-Token";
+    /** 40100: 鉴权失败(契约 400xx 段保留给参数错误, 鉴权单列 401xx) */
+    public static final int ERR_UNAUTHORIZED = 40100;
 
     private final String expectedToken;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public AuthFilter(@Value("${internal.token:}") String expectedToken) {
         this.expectedToken = expectedToken == null ? "" : expectedToken.trim();
@@ -44,13 +51,25 @@ public class AuthFilter extends OncePerRequestFilter {
             return;
         }
         String got = req.getHeader(TOKEN_HEADER);
-        if (expectedToken.equals(got)) {
+        if (constantTimeEquals(expectedToken, got)) {
             chain.doFilter(req, resp);
         } else {
             resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             resp.setContentType(MediaType.APPLICATION_JSON_VALUE);
             resp.setCharacterEncoding("UTF-8");
-            resp.getWriter().write("{\"code\":40100,\"msg\":\"invalid internal token\",\"data\":null}");
+            // 走 ApiResponse 序列化, 不手写 JSON 字符串——信封加字段时不会漏
+            resp.getWriter().write(mapper.writeValueAsString(
+                    ApiResponse.error(ERR_UNAUTHORIZED, "invalid internal token")));
         }
+    }
+
+    /** 定长比较, 避免 token 逐字节早退带来的时序侧信道 */
+    private static boolean constantTimeEquals(String expected, String got) {
+        if (got == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                got.getBytes(StandardCharsets.UTF_8));
     }
 }

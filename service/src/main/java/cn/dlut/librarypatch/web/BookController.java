@@ -32,8 +32,15 @@ public class BookController {
         if (query == null || query.isBlank()) {
             return ApiResponse.error(ApiResponse.ERR_BAD_REQUEST, "缺少查询参数 q");
         }
+        // 边界钳制: 防止 pageSize=100000 之类的请求放大打爆上游 OPAC
+        String q = query.trim();
+        if (q.length() > 200) {
+            return ApiResponse.error(ApiResponse.ERR_BAD_REQUEST, "查询词过长");
+        }
+        page = Math.max(1, page);
+        pageSize = Math.min(50, Math.max(1, pageSize));
         try {
-            BookSearchResult result = opacClient.search(query, page, pageSize);
+            BookSearchResult result = opacClient.search(q, page, pageSize);
             return ApiResponse.ok(Map.of(
                     "total", result.total(),
                     "page", page,

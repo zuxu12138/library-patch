@@ -38,16 +38,20 @@ public class OpacClient {
     private final String searchPath;
     private final String indexName;
     private final int maxRetries;
+    private final long totalTimeoutMs;
 
     public OpacClient(
             @Value("${library.opac.base-url}") String baseUrl,
             @Value("${library.opac.search-path}") String searchPath,
             @Value("${library.opac.index-name}") String indexName,
             @Value("${library.opac.timeout-ms}") int timeoutMs,
-            @Value("${library.opac.max-retries}") int maxRetries) {
+            @Value("${library.opac.max-retries}") int maxRetries,
+            @Value("${library.opac.total-timeout-ms:20000}") long totalTimeoutMs) {
         this.searchPath = searchPath;
         this.indexName = indexName;
         this.maxRetries = maxRetries;
+        // 总预算: 重试全部计入, 上游卡死时单请求最坏 ~totalTimeoutMs, 不再 3×15s 拖死 Tomcat 线程池
+        this.totalTimeoutMs = totalTimeoutMs;
         // 超时必须接线——配置里写了不代表生效，裸 RestClient 默认无超时,OPAC 卡死会拖垮线程池
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(timeoutMs);
@@ -59,7 +63,7 @@ public class OpacClient {
      * 检索馆藏。结果缓存 5 分钟（application.yml opacSearch），相同查询短期不重复打 OPAC。
      * 失败抛 OpacException——异常不进缓存,绝不让"OPAC 挂掉时的空结果"被缓存 5 分钟。
      */
-    @Cacheable(cacheNames = "opacSearch", key = "#query + ':' + #page + ':' + #pageSize")
+    @Cacheable(cacheNames = "opacSearch", key = "#query.trim() + ':' + #page + ':' + #pageSize")
     public BookSearchResult search(String query, int page, int pageSize) {
         // OPAC 真实检索结构：queryFieldList，field="all" 为全字段检索。裸 q 会返回全库不过滤。
         Map<String, Object> body = Map.of(
@@ -80,8 +84,10 @@ public class OpacClient {
         }
     }
 
-    /** 分类重试：超时/429/5xx 退避重试；4xx 直接放弃（不重试）。 */
+    /** 分类重试：超时/429/5xx 退避重试；4xx 直接放弃（不重试）。
+     *  全部重试共享 totalTimeoutMs 总预算; 线程被中断(shutdown)立即抛, 不再继续打上游。 */
     private String postWithRetry(Map<String, Object> body) {
+        long deadline = System.nanoTime() + totalTimeoutMs * 1_000_000L;
         long backoff = 500;
         RuntimeException last = null;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
@@ -104,18 +110,23 @@ public class OpacClient {
                 last = e;
             }
             if (attempt < maxRetries) {
-                sleep(backoff);
+                if (System.nanoTime() + backoff * 1_000_000L > deadline) {
+                    break; // 总预算不够下一次重试, 直接失败
+                }
+                sleepInterruptibly(backoff);
                 backoff *= 2;
             }
         }
         throw last != null ? last : new IllegalStateException("OPAC 请求失败");
     }
 
-    private static void sleep(long ms) {
+    private static void sleepInterruptibly(long ms) {
         try {
             Thread.sleep(ms);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+            // 中断语义: 收到 shutdown 信号后不再继续重试打上游
+            throw new OpacException("重试被中断", ie);
         }
     }
 
