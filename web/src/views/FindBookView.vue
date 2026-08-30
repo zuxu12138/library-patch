@@ -4,6 +4,8 @@ import { searchBooks, sendFeedback, type Book, type FindBookResult, type Holding
 import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
 import LoadingState from "../components/LoadingState.vue";
+import SealStamp from "../components/SealStamp.vue";
+import { inkDrop } from "../ink/ink";
 
 const query = ref("");
 const result = ref<FindBookResult | null>(null);
@@ -116,6 +118,7 @@ async function search(toPage = 1) {
     result.value = await searchBooks(lastQuery.value, toPage, pageSize);
     pushRecent(lastQuery.value);
     expanded.value = new Set();
+    inkDrop(); // 结果浮现时, 书页页缘落一滴墨
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "出了点问题，请稍后再试";
   } finally {
@@ -146,6 +149,10 @@ async function submitFeedback(text: string) {
     <!-- 命令式搜索框: Raycast 风格 -->
     <form class="command" role="search" @submit.prevent="search()">
       <div class="command-box" :class="{ focused: showSuggest }">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+          <path d="M16.5 16.5L21 21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
         <input
           ref="searchInput"
           v-model="query"
@@ -157,6 +164,15 @@ async function submitFeedback(text: string) {
           @blur="onInputBlur"
           @keydown="onInputKeydown"
         />
+        <button
+          v-if="query"
+          type="button"
+          class="clear-btn"
+          aria-label="清空检索词"
+          @mousedown.prevent="query = ''; searchInput?.focus()"
+        >
+          ×
+        </button>
         <kbd class="hint-key" aria-hidden="true">⌘K</kbd>
       </div>
       <div v-if="showSuggest && suggests.length" class="suggest" role="listbox">
@@ -169,6 +185,9 @@ async function submitFeedback(text: string) {
           :class="{ active: i === activeSuggest }"
           @mousedown.prevent="pickSuggest(s)"
         >
+          <span class="suggest-icon" :class="{ hot: !recent.includes(s) }" aria-hidden="true">
+            {{ recent.includes(s) ? "↺" : "·" }}
+          </span>
           {{ s }}
         </button>
       </div>
@@ -187,7 +206,7 @@ async function submitFeedback(text: string) {
         <span class="plan-note-rule" aria-hidden="true"></span>{{ result.plan_note }}
       </p>
 
-      <ul v-if="result.books.length" class="book-grid">
+      <ul v-if="result.books?.length" class="book-grid">
         <li
           v-for="(book, i) in result.books"
           :key="book.bibId"
@@ -206,6 +225,8 @@ async function submitFeedback(text: string) {
             <span class="mono">{{ book.callNos.join(" / ") }}</span>
           </div>
 
+          <p v-if="book.abstractText" class="book-abstract">{{ book.abstractText }}</p>
+
           <!-- holdings 翻牌展开 -->
           <button
             v-if="book.holdings?.length"
@@ -219,28 +240,36 @@ async function submitFeedback(text: string) {
             <span class="chevron" aria-hidden="true">{{ expanded.has(book.bibId) ? "▴" : "▾" }}</span>
           </button>
 
-          <div v-if="expanded.has(book.bibId)" class="holdings-table-wrap">
-            <table class="holdings-table">
-              <thead>
-                <tr><th>索书号</th><th>架位</th><th>状态</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="h in book.holdings" :key="h.barCode">
-                  <td class="mono">{{ h.callNo }}</td>
-                  <td>{{ h.location }}</td>
-                  <td>
-                    <span class="badge" :class="holdingStatus(h)">
-                      {{ holdingStatus(h) === "in" ? "可借" : holdingStatus(h) === "out" ? "已借出" : h.status || "未知" }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div
+            v-show="book.holdings?.length"
+            class="holdings-panel"
+            :class="{ open: expanded.has(book.bibId) }"
+            :aria-hidden="!expanded.has(book.bibId)"
+          >
+            <div class="holdings-panel-inner">
+              <table class="holdings-table">
+                <thead>
+                  <tr><th>索书号</th><th>架位</th><th>状态</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="h in book.holdings" :key="h.barCode">
+                    <td class="mono">{{ h.callNo }}</td>
+                    <td>{{ h.location }}</td>
+                    <td>
+                      <span class="badge" :class="holdingStatus(h)">
+                        {{ holdingStatus(h) === "in" ? "可借" : holdingStatus(h) === "out" ? "已借出" : h.status || "未知" }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </li>
       </ul>
 
       <div v-else class="empty-state">
+        <SealStamp variant="idle" text="未藏" />
         <p class="empty-title">书架的这一层是空的</p>
         <p class="empty-sub">没有找到「{{ lastQuery }}」，换个关键词，或用作者名、ISBN 试试</p>
       </div>
@@ -307,6 +336,40 @@ async function submitFeedback(text: string) {
 .command-box.focused,
 .command-box:focus-within {
   border-color: var(--color-teal);
+  box-shadow: var(--focus-ring);
+}
+
+.search-icon {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+  color: var(--color-ink-muted);
+  transition: color 0.2s ease;
+}
+
+.command-box:focus-within .search-icon {
+  color: var(--color-teal);
+}
+
+.clear-btn {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-ink-muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.clear-btn:hover {
+  background: var(--color-paper);
+  color: var(--color-ink);
 }
 
 .command-box input {
@@ -349,6 +412,9 @@ async function submitFeedback(text: string) {
 }
 
 .suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
   text-align: left;
   border: none;
   background: transparent;
@@ -358,11 +424,27 @@ async function submitFeedback(text: string) {
   cursor: pointer;
   border-radius: 2px;
   min-height: 44px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.suggest-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-ink-muted);
+}
+
+.suggest-icon.hot {
+  font-size: 22px;
+  line-height: 0;
+  color: var(--color-teal);
 }
 
 .suggest-item:hover,
 .suggest-item.active {
-  background: var(--color-paper);
+  background: var(--color-teal-bg);
   color: var(--color-teal);
 }
 
@@ -416,7 +498,7 @@ async function submitFeedback(text: string) {
   border: 1px solid var(--color-line);
   border-radius: 2px;
   padding: 1.1rem 1.15rem 1.5rem;
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease;
+  transition: transform 0.25s var(--ease-out), border-color 0.2s ease;
 }
 
 /* 编目卡底部的打孔 */
@@ -490,6 +572,17 @@ async function submitFeedback(text: string) {
   color: var(--color-ink);
 }
 
+.book-abstract {
+  margin: 0.75rem 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* holdings 翻牌 */
 .holdings-toggle {
   display: flex;
@@ -526,14 +619,38 @@ async function submitFeedback(text: string) {
   color: var(--color-ink-muted);
 }
 
-.holdings-table-wrap {
-  overflow: hidden;
-  animation: flip-open 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+.holdings-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transform: perspective(800px) rotateX(-12deg);
+  transform-origin: top center;
+  opacity: 0;
+  transition: grid-template-rows 0.35s var(--ease-out), transform 0.35s var(--ease-out), opacity 0.3s ease;
 }
 
-@keyframes flip-open {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
+.holdings-panel.open {
+  grid-template-rows: 1fr;
+  transform: perspective(800px) rotateX(0deg);
+  opacity: 1;
+}
+
+.holdings-panel-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holdings-panel {
+    transition: none;
+  }
+  .holdings-panel:not(.open) {
+    opacity: 0;
+    transform: none;
+  }
+  .holdings-panel.open {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .holdings-table {
@@ -550,6 +667,14 @@ async function submitFeedback(text: string) {
   border-bottom: 1px solid var(--color-line);
   font-size: 11px;
   letter-spacing: 0.08em;
+}
+
+.holdings-table tbody tr {
+  transition: background 0.12s ease;
+}
+
+.holdings-table tbody tr:hover {
+  background: var(--color-paper);
 }
 
 .holdings-table td {

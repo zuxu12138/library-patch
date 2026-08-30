@@ -9,7 +9,7 @@ defineProps<{ rows?: number }>();
       v-for="i in rows ?? 3"
       :key="i"
       class="skeleton skeleton-row"
-      :style="{ width: i % 3 === 0 ? '62%' : i % 3 === 2 ? '84%' : '76%' }"
+      :style="{ width: i % 3 === 0 ? '62%' : i % 3 === 2 ? '84%' : '76%', animationDelay: `${(i - 1) * 120}ms` }"
     ></div>
   </div>
 </template>

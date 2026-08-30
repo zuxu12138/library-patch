@@ -5,6 +5,8 @@ import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
 import LoadingState from "../components/LoadingState.vue";
 import SeatMapPanel from "../components/SeatMapPanel.vue";
+import SealStamp from "../components/SealStamp.vue";
+import SeatSparkline from "../components/SeatSparkline.vue";
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const LIB_NAMES: Record<string, string> = {
@@ -116,13 +118,14 @@ async function submitFeedback(text: string) {
           max="23"
           step="1"
           class="hour-slider"
+          :style="{ '--fill': `${(hour / 23) * 100}%` }"
           aria-label="小时"
           @input="onTimeChange"
         />
         <span class="hour-label mono">{{ String(hour).padStart(2, "0") }}:00</span>
       </div>
       <p v-if="isNow" class="now-line-note">
-        <span class="now-mark" aria-hidden="true"></span>当前时刻 · {{ weekdayLabel }}
+        <span class="live-dot" aria-hidden="true"></span>当前时刻 · {{ weekdayLabel }}
       </p>
     </div>
 
@@ -192,7 +195,6 @@ async function submitFeedback(text: string) {
             ></div>
           </div>
           <p v-if="r.samples < 4" class="low-samples">历史样本少（{{ r.samples }} 次），预测置信度低</p>
-
           <!-- 座位平面图下钻 -->
           <SeatMapPanel
             v-if="expandedMap === r.area_name && r.map_id"
@@ -201,11 +203,19 @@ async function submitFeedback(text: string) {
             @close="expandedMap = null"
           />
         </div>
+        <SeatSparkline
+          :area-name="r.area_name"
+          :weekday="weekday"
+          :hour="hour"
+          :rate="r.avg_occupancy_rate"
+          class="spark"
+        />
         <span class="rate mono">{{ Math.round(r.avg_occupancy_rate * 100) }}%</span>
       </li>
     </ol>
 
     <div v-else-if="prediction" class="empty-state">
+      <SealStamp variant="idle" text="无座" />
       <p class="empty-title">这个时段还没有数据</p>
       <p class="empty-sub">采集器正在攒历史，换个时段试试</p>
     </div>
@@ -267,16 +277,18 @@ async function submitFeedback(text: string) {
   font-size: 14px;
   color: var(--color-ink-soft);
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
 .weekday:hover {
   color: var(--color-ink);
+  background: var(--color-paper);
 }
 
 .weekday.active {
   color: var(--color-teal);
   border-color: var(--color-teal);
+  background: var(--color-teal-bg);
   font-weight: 600;
 }
 
@@ -290,9 +302,11 @@ async function submitFeedback(text: string) {
   flex: 1;
   appearance: none;
   height: 2px;
-  background: var(--color-line);
+  /* 已走过的时段用深青填满, 未到的还是纸线 */
+  background: linear-gradient(to right, var(--color-teal) 0%, var(--color-teal) var(--fill, 0%), var(--color-line) var(--fill, 0%), var(--color-line) 100%);
   border-radius: 1px;
   outline: none;
+  transition: background 0.1s linear;
 }
 
 .hour-slider::-webkit-slider-thumb {
@@ -329,12 +343,6 @@ async function submitFeedback(text: string) {
   margin: 0.75rem 0 0;
   font-size: 12px;
   color: var(--color-ink-muted);
-}
-
-.now-mark {
-  width: 1px;
-  height: 12px;
-  background: var(--color-teal);
 }
 
 /* 全馆汇总 + 分馆 tab */
@@ -446,8 +454,15 @@ async function submitFeedback(text: string) {
   display: flex;
   align-items: flex-start;
   gap: 1rem;
-  padding: 0.9rem 0.25rem;
+  padding: 0.9rem 0.6rem;
+  margin: 0 -0.6rem;
   border-bottom: 1px solid var(--color-line);
+  border-radius: 2px;
+  transition: background 0.15s ease;
+}
+
+.rank-row:hover {
+  background: var(--color-card);
 }
 
 .rank-no {
@@ -504,11 +519,12 @@ async function submitFeedback(text: string) {
 .bar-fill {
   height: 100%;
   background: var(--color-teal);
-  transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: width 0.35s var(--ease-out), background 0.3s ease;
 }
 
+/* 占用率 ≥60%: 拥挤预警, 用克制的赭黄而非警报红 */
 .bar-fill.hot {
-  background: var(--color-ink-muted);
+  background: var(--color-warn);
 }
 
 .low-samples {
@@ -524,6 +540,11 @@ async function submitFeedback(text: string) {
   padding-top: 1px;
   min-width: 42px;
   text-align: right;
+}
+
+.spark {
+  margin-left: auto;
+  padding-right: 0.5rem;
 }
 
 .empty-state {
@@ -554,6 +575,9 @@ async function submitFeedback(text: string) {
   .rank-head {
     flex-direction: column;
     gap: 0.1rem;
+  }
+  .spark {
+    display: none;
   }
 }
 </style>

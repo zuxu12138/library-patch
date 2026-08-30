@@ -1,20 +1,25 @@
-/* 设计系统: Editorial Minimalism(见 UI 设计规格)
-   米白纸感 + 墨色文字;深青仅主按钮/激活/高亮;赭红仅推荐/PDF 角标(≤5% 面积);
-   无投影、无渐变、无玻璃拟态;1px #E6E6DF 分割线;圆角 ≤2px。 */
+/* 设计系统: Editorial Minimalism(见 UI 设计规格) — 整站即一本书版
+   米白纸页 #FAFAF7 摊在更深的米色桌面 #F0EFE9 上;深青仅主按钮/激活/高亮;
+   赭红仅推荐/PDF 角标(≤5% 面积);1px #E6E6DF 分割线;圆角 ≤2px。
+   精化层: 4% 以内的柔和投影、纸纹、焦点环、统一缓动;翻页光影是唯一的渐变。 */
 @import "tailwindcss";
 
 @theme {
   --color-paper: #fafaf7;
+  --color-desk: #efece3;
   --color-card: #ffffff;
   --color-ink: #1c1c1a;
-  --color-ink-soft: #4a4a46;
-  --color-ink-muted: #8a8a82;
+  --color-ink-soft: #3a3a36;
+  --color-ink-muted: #8b8b84;
   --color-line: #e6e6df;
-  --color-teal: #0f5c5c;
-  --color-teal-deep: #0a4444;
-  --color-seal: #b3413c;
+  --color-teal: #2c5f5d;
+  --color-teal-deep: #1a4240;
+  --color-teal-bg: #eaf0ef;
+  --color-seal: #a63a2e;
   --color-available: #2f6b3a;
   --color-available-bg: #eef4ee;
+  --color-warn: #9a6b1f;
+  --color-warn-bg: #f7f1e3;
 
   --font-serif: "Fraunces", "Noto Serif SC", serif;
   --font-sans: "Inter", "Noto Sans SC", -apple-system, sans-serif;
@@ -22,21 +27,62 @@
 
   --nav-h: 60px;
   --measure: 72rem;
+
+  /* 统一缓动 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 聚焦光晕 */
+  --focus-ring: 0 0 0 3px rgba(44, 95, 93, 0.16);
+
+  /* 纸纹: 极低透明度噪点, 让"纸"有触感而不是死白 */
+  --paper-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
 }
 
 html {
-  background: var(--color-paper);
+  background: var(--color-desk);
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
   margin: 0;
   min-width: 320px;
+  background-image: var(--paper-noise);
 }
 
-/* 尊重减少动效偏好: 过渡压至瞬时 */
+/* 选中文字: 深青浅底 */
+::selection {
+  background: rgba(44, 95, 93, 0.16);
+  color: var(--color-ink);
+}
+
+/* 键盘导航可见焦点 */
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 细滚动条, 与纸感一致的墨色 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 尊重减少动效偏好: 过渡压至瞬时(翻页在 BookShell 降级为 slide+fade) */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -63,21 +109,7 @@ body {
   border-radius: 2px;
 }
 
-/* 页面切换: 180ms 交叉淡入(0.92→1, 不是 0→1) */
-.page-enter-active {
-  transition: opacity 0.18s ease;
-}
-.page-leave-active {
-  transition: opacity 0.12s ease;
-}
-.page-enter-from {
-  opacity: 0.92;
-}
-.page-leave-to {
-  opacity: 0.92;
-}
-
-/* 结果卡片逐张浮现 */
+/* 结果卡片逐张浮现; 翻页落定前由 BookShell 的 .settled 门控压住 */
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -90,5 +122,26 @@ body {
 }
 
 .rise-in {
-  animation: rise-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise-in 0.35s var(--ease-out) both;
+}
+
+/* 实时数据脉冲点(座位「当前时刻」等) */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-available);
+  animation: pulse-dot 1.8s ease-in-out infinite;
 }

@@ -12,6 +12,8 @@ import {
 import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
 import LoadingState from "../components/LoadingState.vue";
+import SealStamp from "../components/SealStamp.vue";
+import { inkDrop } from "../ink/ink";
 
 const paperId = ref("");
 const activePaperId = ref(""); // 当前图的中心(下钻后变)
@@ -40,7 +42,10 @@ async function doSearchPapers() {
   try {
     const r = await searchPapers(searchQuery.value.trim());
     if (r.error) searchError.value = r.error;
-    else searchResults.value = r.papers;
+    else {
+      searchResults.value = r.papers;
+      inkDrop();
+    }
   } catch (err) {
     searchError.value = err instanceof Error ? err.message : "检索失败，请稍后再试";
   } finally {
@@ -53,6 +58,7 @@ function pickPaper(p: GraphNode) {
   paperId.value = p.paperId;
   activeTitle.value = p.title ?? "";
   showSearch.value = false;
+  inkDrop();
   loadGraph();
 }
 
@@ -83,6 +89,7 @@ async function loadGraph(targetId?: string) {
     }
     graph.value = g;
     activePaperId.value = id;
+    inkDrop();
     await nextTick();
     renderChart(g);
     // 摘要独立加载, 失败不影响图
@@ -111,13 +118,13 @@ function renderChart(g: CitationGraph) {
         roam: true, // 滚轮缩放 + 拖拽平移
         force: { repulsion: 220, edgeLength: 90 },
         // hover 时无关节点降至低透明度, 仅高亮关联航路
-        emphasis: { focus: "adjacency", lineStyle: { color: "#0f5c5c", width: 2, type: "solid" } },
+        emphasis: { focus: "adjacency", lineStyle: { color: "#2c5f5d", width: 2, type: "solid" } },
         label: {
           show: true,
           position: "right",
           fontSize: 11,
           fontFamily: "Inter, sans-serif",
-          color: "#4a4a46",
+          color: "#3a3a36",
           overflow: "truncate",
           width: 130,
         },
@@ -130,10 +137,10 @@ function renderChart(g: CitationGraph) {
           itemStyle:
             i === 0
               ? {
-                  color: "#0f5c5c",
+                  color: "#2c5f5d",
                   // 中心光晕用 box-shadow, 不用 filter: blur(防性能问题)
                   shadowBlur: 14,
-                  shadowColor: "rgba(15, 92, 92, 0.45)",
+                  shadowColor: "rgba(44, 95, 93, 0.45)",
                 }
               : { color: "#1c1c1a" },
         })),
@@ -141,7 +148,7 @@ function renderChart(g: CitationGraph) {
         links: g.edges.map((e) => ({
           source: e.source,
           target: e.target,
-          lineStyle: { color: "#8a8a82", width: 1, type: "dashed" },
+          lineStyle: { color: "#8b8b84", width: 1, type: "dashed" },
         })),
       },
     ],
@@ -162,6 +169,7 @@ function renderChart(g: CitationGraph) {
 function drill(id: string, title?: string) {
   paperId.value = id;
   activeTitle.value = title ?? "";
+  inkDrop();
   loadGraph(id);
 }
 
@@ -195,7 +203,8 @@ async function submitFeedback(text: string) {
       <button type="button" class="paper-search-toggle" @click="showSearch = !showSearch">
         {{ showSearch ? "收起 ▴" : "没有坐标？按关键词找论文 ▾" }}
       </button>
-      <div v-if="showSearch" class="paper-search-panel">
+      <Transition name="expand">
+        <div v-if="showSearch" class="paper-search-panel">
         <form class="paper-search-bar" @submit.prevent="doSearchPapers">
           <input v-model="searchQuery" type="search" placeholder="输入论文关键词，如 transformer" aria-label="论文关键词" />
           <button type="submit" :disabled="searching">{{ searching ? "寻找中…" : "寻找" }}</button>
@@ -210,7 +219,8 @@ async function submitFeedback(text: string) {
           </li>
         </ul>
         <p v-else-if="!searching && !searchError && searchResults.length === 0 && searched" class="dim-note">没有找到相关论文</p>
-      </div>
+        </div>
+      </Transition>
     </div>
 
     <LoadingState v-if="loading" :rows="4" />
@@ -230,10 +240,10 @@ async function submitFeedback(text: string) {
 
         <!-- 罗盘 -->
         <svg class="compass" viewBox="0 0 60 60" aria-hidden="true">
-          <circle cx="30" cy="30" r="26" fill="none" stroke="#8a8a82" stroke-width="1" />
-          <path d="M30 8 L34 30 L30 26 L26 30 Z" fill="#0f5c5c" />
-          <path d="M30 52 L26 30 L30 34 L34 30 Z" fill="none" stroke="#8a8a82" stroke-width="1" />
-          <text x="30" y="7" text-anchor="middle" font-size="8" fill="#8a8a82" font-family="serif">N</text>
+          <circle cx="30" cy="30" r="26" fill="none" stroke="#8b8b84" stroke-width="1" />
+          <path d="M30 8 L34 30 L30 26 L26 30 Z" fill="#2c5f5d" />
+          <path d="M30 52 L26 30 L30 34 L34 30 Z" fill="none" stroke="#8b8b84" stroke-width="1" />
+          <text x="30" y="7" text-anchor="middle" font-size="8" fill="#8b8b84" font-family="serif">N</text>
         </svg>
 
         <!-- 图例 -->
@@ -267,9 +277,9 @@ async function submitFeedback(text: string) {
             target="_blank"
             rel="noopener"
             class="pdf-seal"
+            aria-label="打开 PDF"
           >
-            <span class="seal-text">PDF</span>
-            <span v-if="summary.openAccessPdf.license" class="seal-license">{{ summary.openAccessPdf.license }}</span>
+            <SealStamp variant="seal" text="PDF" :subtext="summary.openAccessPdf.license" size="md" />
           </a>
         </div>
 
@@ -289,7 +299,10 @@ async function submitFeedback(text: string) {
       </article>
     </template>
 
-    <p v-else class="empty-invite">输入 paperId 开始探索 —— 图谱会像星图一样展开</p>
+    <div v-else class="empty-invite">
+      <SealStamp variant="idle" text="待探" />
+      <p>输入 paperId 开始探索 —— 图谱会像星图一样展开</p>
+    </div>
 
     <FeedbackFab
       :open="feedbackOpen"
@@ -396,6 +409,19 @@ async function submitFeedback(text: string) {
   margin-left: auto;
   font-size: 11.5px;
   flex-shrink: 0;
+}
+
+/* 关键词面板展开/收起过渡 */
+.expand-enter-active,
+.expand-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s var(--ease-out);
+  transform-origin: top;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scaleY(0.96);
 }
 
 /* 图纸框: 双线边框 + 经纬网格底纹 */
@@ -650,37 +676,15 @@ async function submitFeedback(text: string) {
   color: var(--color-ink-muted);
 }
 
-/* 赭红印章式 PDF 角标 */
+/* 方形白文朱砂 PDF 钤印 */
 .pdf-seal {
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 58px;
-  height: 58px;
-  border: 1.5px solid var(--color-seal);
-  border-radius: 50%;
-  color: var(--color-seal);
+  display: inline-flex;
   text-decoration: none;
-  transform: rotate(-8deg);
-  transition: transform 0.2s ease;
 }
 
-.pdf-seal:hover {
-  transform: rotate(-4deg) scale(1.05);
-}
-
-.seal-text {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.seal-license {
-  font-size: 8.5px;
-  letter-spacing: 0.04em;
+.pdf-seal:hover .seal-stamp {
+  transform: rotate(var(--seal-rotate, 0deg)) scale(1.05);
 }
 
 /* 作者胶片条 */
@@ -712,15 +716,34 @@ async function submitFeedback(text: string) {
   color: var(--color-ink-soft);
 }
 
+/* editorial 首字下沉: 摘要第一段的开篇字母 */
+.abstract-para:first-of-type::first-letter {
+  font-family: var(--font-serif);
+  font-size: 2.7em;
+  font-weight: 600;
+  line-height: 1;
+  float: left;
+  padding: 0.06em 0.12em 0 0;
+  color: var(--color-teal);
+}
+
 .abstract-para.dim {
   color: var(--color-ink-muted);
 }
 
 .empty-invite {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
   text-align: center;
   color: var(--color-ink-muted);
   margin: 3rem 0 0;
   font-size: 14px;
+}
+
+.empty-invite p {
+  margin: 0;
 }
 
 @media (max-width: 640px) {

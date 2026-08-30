@@ -108,7 +108,7 @@ async function submit(prefix: string) {
   gap: 0.75rem;
 }
 
-/* 悬浮墨点: 纯色圆点, 无阴影 */
+/* 悬浮墨点: 纯色圆点 */
 .fab {
   display: grid;
   place-items: center;
