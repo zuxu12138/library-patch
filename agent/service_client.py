@@ -84,6 +84,13 @@ class ServiceClient:
                         await asyncio.sleep(_BASE_DELAY * (2**attempt))
                         continue
                     raise ServiceUnavailable(f"timeout calling {path}") from exc
+                except httpx.TransportError as exc:
+                    # Java 宕机/连接被拒也走重试+熔断, 不能裸抛成原生 500
+                    last_error = exc
+                    if attempt < _MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(_BASE_DELAY * (2**attempt))
+                        continue
+                    raise ServiceUnavailable(f"connection failed calling {path}") from exc
 
                 if response.status_code in _RETRYABLE_STATUS or response.status_code >= 500:
                     last_error = ServiceUnavailable(f"HTTP {response.status_code} from {path}")
@@ -95,7 +102,11 @@ class ServiceClient:
                 if response.status_code >= 400:
                     raise ServiceError(response.status_code, f"HTTP {response.status_code} from {path}")
 
-                body = response.json()
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    # 下游返回 200 但非 JSON(网关错误页等), 按服务不可用处理, 不裸抛 500
+                    raise ServiceUnavailable(f"non-JSON response from {path}") from exc
                 code = body.get("code", 0)
                 if code != 0:
                     raise ServiceError(code, body.get("msg", ""))

@@ -59,6 +59,34 @@ async def test_timeout_retries_then_raises_service_unavailable(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_connect_error_retries_then_raises_service_unavailable(monkeypatch):
+    """Java 宕机时 httpx 抛 ConnectError(TransportError), 必须走重试+熔断,
+    不能裸抛成路由层的原生 500。"""
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        raise httpx.ConnectError("connection refused")
+
+    client = _client(handler, monkeypatch)
+    with pytest.raises(ServiceUnavailable):
+        await client.search_books("q", 1, 10, trace_id="t1")
+    assert calls["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_non_json_200_raises_service_unavailable(monkeypatch):
+    """下游 200 但返回 HTML 错误页(网关/反代)时, 按服务不可用处理。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>Bad Gateway</html>")
+
+    client = _client(handler, monkeypatch)
+    with pytest.raises(ServiceUnavailable):
+        await client.search_books("q", 1, 10, trace_id="t1")
+
+
+@pytest.mark.asyncio
 async def test_429_retries_then_succeeds(monkeypatch):
     calls = {"count": 0}
 

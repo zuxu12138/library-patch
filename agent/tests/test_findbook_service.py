@@ -38,15 +38,16 @@ async def test_find_runs_agent_loop_with_query_key_and_returns_result():
 
 
 @pytest.mark.asyncio
-async def test_find_tool_degrades_on_service_unavailable():
+async def test_find_tool_propagates_service_unavailable_to_envelope_layer():
+    """故障不吞: ServiceUnavailable 冒泡, 由 main.py 异常处理器转成 50001 信封。
+    前端据此显示「书架暂时清点中」, 而不是拿到 code=0 但 books 缺失的脏数据。"""
     loop = FakeAgentLoop()
     stub = _StubServiceClient()
     stub.raise_error = ServiceUnavailable("boom")
     service = FindBookService(loop, stub)
 
-    result = await service.find("机器学习", 1, 10, user_id="u1", trace_id="abc123")
-
-    assert result.output == {"error": "图书检索服务暂时不可用，请稍后再试"}
+    with pytest.raises(ServiceUnavailable):
+        await service.find("机器学习", 1, 10, user_id="u1", trace_id="abc123")
 
 
 @pytest.mark.asyncio

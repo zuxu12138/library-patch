@@ -3,8 +3,6 @@
 """
 from __future__ import annotations
 
-from agent.service_client import ServiceError, ServiceUnavailable
-
 
 class FindBookService:
     def __init__(self, agent_loop, service_client):
@@ -14,15 +12,14 @@ class FindBookService:
 
     async def _search_books_tool(self, tool_args: dict) -> dict:
         # AgentLoop 契约: handler 接收 tool_args(dict), 见 agent/core/agent_loop.py
-        try:
-            return await self._service_client.search_books(
-                tool_args["query"],
-                tool_args.get("page", 1),
-                tool_args.get("page_size", 10),
-                tool_args["trace_id"],
-            )
-        except (ServiceError, ServiceUnavailable):
-            return {"error": "图书检索服务暂时不可用，请稍后再试"}
+        # 故障不吞: 让 ServiceError/ServiceUnavailable 冒泡到 main.py 的异常处理器,
+        # 由信封把 50001/50002 正确透出给前端(前端据此显示「书架暂时清点中」)
+        return await self._service_client.search_books(
+            tool_args["query"],
+            tool_args.get("page", 1),
+            tool_args.get("page_size", 10),
+            tool_args["trace_id"],
+        )
 
     async def find(self, query: str, page: int, page_size: int, user_id: str, trace_id: str):
         return await self._agent_loop.run(

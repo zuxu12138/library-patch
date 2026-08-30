@@ -27,20 +27,24 @@ class SeatPredictService:
     async def _predict_tool(self, tool_args: dict) -> dict:
         # AgentLoop 契约: handler 接收 tool_args(dict), 见 agent/core/agent_loop.py
         weekday, hour, trace_id = tool_args["weekday"], tool_args["hour"], tool_args["trace_id"]
-        conn = self._read_conn()
         try:
-            rows = conn.execute(
-                """
-                SELECT area_name, AVG(occupied) AS avg_occupied, AVG(total) AS avg_total,
-                       COUNT(*) AS samples
-                FROM area_snapshot
-                WHERE weekday = ? AND substr(hhmm, 1, 2) = ?
-                GROUP BY area_name
-                """,
-                (weekday, f"{hour:02d}"),
-            ).fetchall()
-        finally:
-            conn.close()
+            conn = self._read_conn()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT area_name, AVG(occupied) AS avg_occupied, AVG(total) AS avg_total,
+                           COUNT(*) AS samples
+                    FROM area_snapshot
+                    WHERE weekday = ? AND substr(hhmm, 1, 2) = ?
+                    GROUP BY area_name
+                    """,
+                    (weekday, f"{hour:02d}"),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            # DB 缺失/锁定/表不存在: 按采集器故障降级, 不裸抛 sqlite 原文成 500
+            raise ServiceUnavailable(f"seats history db unavailable: {type(exc).__name__}") from exc
 
         # 实时占用：拿来修正/兜底,不再只是标个布尔就扔
         realtime: dict[str, dict] = {}
@@ -49,9 +53,8 @@ class SeatPredictService:
             now = await self._service_client.seats_now(trace_id)
             for area in (now or {}).get("areas", []):
                 realtime[area.get("areaName", "")] = area
-        except ServiceUnavailable:
-            realtime_available = False
         except Exception:
+            # 实时接口任何故障都降级为纯历史预测, 不影响主流程
             realtime_available = False
 
         history: dict[str, dict] = {}
