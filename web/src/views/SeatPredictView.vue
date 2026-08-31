@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { predictSeats, sendFeedback, type SeatPrediction } from "../api/seat";
 import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
@@ -24,6 +24,14 @@ const prediction = ref<SeatPrediction | null>(null);
 const feedbackOpen = ref(false);
 const libFilter = ref(""); // "" = 全部
 const expandedMap = ref<string | null>(null); // 展开平面图的 area_name
+
+// 心跳时钟: 驱动 isNow / 闭馆态随真实时间翻转; 「当前时刻」页每 60s 静默刷新实时数据
+const nowTick = ref(Date.now());
+const tickTimer = window.setInterval(() => {
+  nowTick.value = Date.now();
+  if (isNow.value) predict(true);
+}, 60_000);
+onUnmounted(() => window.clearInterval(tickTimer));
 
 const libs = computed(() => {
   const seen = new Set<string>();
@@ -50,8 +58,22 @@ const hallSummary = computed(() => {
 
 const weekdayLabel = computed(() => `周${WEEKDAYS[weekday.value - 1]}`);
 const isNow = computed(() => {
-  const d = new Date();
+  const d = new Date(nowTick.value);
   return weekday.value === (d.getDay() === 0 ? 7 : d.getDay()) && hour.value === d.getHours();
+});
+
+// 闭馆态: 后端按所选时段判定(07:00–22:00 开馆), 闭馆时无实时数据, 只展示历史规律
+const isClosed = computed(() => prediction.value !== null && !prediction.value.is_open);
+const openHoursLabel = computed(() => {
+  const [open, close] = prediction.value?.open_hours ?? [7, 22];
+  return `${String(open).padStart(2, "0")}:00 – ${String(close).padStart(2, "0")}:00`;
+});
+// 闭馆时的恢复提示: 凌晨闭馆 → 今早开馆; 晚间闭馆 → 明早开馆
+const reopenLabel = computed(() => {
+  if (!isNow.value) return "该时段为闭馆时间";
+  const [open] = prediction.value?.open_hours ?? [7, 22];
+  const today = new Date(nowTick.value).getHours() < open;
+  return `${today ? "今日" : "明日"} ${String(open).padStart(2, "0")}:00 起恢复预约`;
 });
 
 // 时间滑杆防抖 300ms
@@ -61,10 +83,10 @@ function onTimeChange() {
   debounceTimer = window.setTimeout(() => predict(), 300);
 }
 
-async function predict() {
+async function predict(background = false) {
   loading.value = true;
   errorMessage.value = "";
-  expandedMap.value = null;
+  if (!background) expandedMap.value = null; // 静默刷新保留用户展开的平面图
   try {
     prediction.value = await predictSeats(weekday.value, hour.value);
   } catch (err) {
@@ -122,28 +144,45 @@ async function submitFeedback(text: string) {
           aria-label="小时"
           @input="onTimeChange"
         />
-        <span class="hour-label mono">{{ String(hour).padStart(2, "0") }}:00</span>
+        <span class="hour-label mono" :class="{ closed: isClosed }">{{ String(hour).padStart(2, "0") }}:00</span>
       </div>
       <p v-if="isNow" class="now-line-note">
         <span class="live-dot" aria-hidden="true"></span>当前时刻 · {{ weekdayLabel }}
       </p>
     </div>
 
-    <!-- 降级横幅: 实时数据不可用时 -->
-    <p v-if="prediction && !prediction.realtime_available" class="banner" role="status">
+    <!-- 闭馆态: 暂停服务说明, 不再展示实时占用(闭馆后座位系统返回全空假象) -->
+    <div v-if="isClosed" class="closed-hero rise-in" role="status">
+      <SealStamp variant="idle" text="闭馆" subtext="暂停服务" />
+      <h2 class="closed-title">抱歉，座位预约服务已暂停</h2>
+      <p class="closed-sub">每日开馆 {{ openHoursLabel }} · {{ reopenLabel }}</p>
+      <p v-if="filteredRanking.length" class="closed-note">以下为该时段历史规律，供开馆后选座参考</p>
+    </div>
+
+    <!-- 降级横幅: 当前时刻且开馆, 但实时数据不可达时 -->
+    <p v-if="prediction && isNow && prediction.is_open && !prediction.realtime_available" class="banner" role="status">
       实时座位数据暂不可达，以下为纯历史预测
     </p>
 
-    <p v-if="prediction?.realtime_available" class="banner" role="status">
+    <!-- 非当前时刻的开馆时段: 说明为何没有实时空闲数 -->
+    <p v-else-if="prediction && !isNow && prediction.is_open" class="banner banner-note" role="status">
+      实时空闲数仅在「当前时刻」展示，以下为该时段历史规律预测
+    </p>
+
+    <p v-if="prediction?.is_open && prediction?.realtime_available" class="banner banner-note" role="status">
       统计口径：已占用或不可预约均计入占用，按楼层汇总，优先使用每 5 分钟采集的最新数据；不代表实际在馆人数。
     </p>
 
     <p v-if="prediction?.personalization" class="banner" role="status">{{ prediction.personalization.note }}</p>
-    <!-- 全馆实时汇总 + 分馆筛选 -->
-    <div v-if="hallSummary" class="hall-bar">
+    <!-- 全馆实时汇总 + 分馆筛选(仅开馆且拿到实时数据时) -->
+    <div v-if="hallSummary && prediction?.is_open" class="hall-bar">
       <span class="hall-total">
         可用空座 <strong class="mono">{{ hallSummary.free }}</strong
         ><span class="dim mono"> / {{ hallSummary.total }}</span>
+        <span v-if="prediction?.fetched_at" class="hall-updated mono">更新于 {{ prediction.fetched_at }}</span>
+        <button type="button" class="refresh-btn" :disabled="loading" @click="predict(true)">
+          {{ loading ? "刷新中…" : "刷新" }}
+        </button>
       </span>
       <div class="lib-tabs" role="tablist" aria-label="分馆筛选">
         <button
@@ -178,7 +217,7 @@ async function submitFeedback(text: string) {
         :style="{ animationDelay: `${i * 50}ms` }"
       >
         <span class="rank-no mono">{{ String(i + 1).padStart(2, "0") }}</span>
-        <span v-if="i === 0 && r.avg_occupancy_rate < 1 && r.free_now !== 0" class="rec-badge">推荐</span>
+        <span v-if="i === 0 && !isClosed && r.avg_occupancy_rate < 1 && r.free_now !== 0" class="rec-badge">推荐</span>
         <div class="rank-main">
           <button
             type="button"
@@ -343,6 +382,11 @@ async function submitFeedback(text: string) {
   text-align: right;
 }
 
+/* 所选时段在闭馆时间: 标签转墨色, 与闭馆 hero 呼应 */
+.hour-label.closed {
+  color: var(--color-ink-muted);
+}
+
 .now-line-note {
   display: flex;
   align-items: center;
@@ -447,6 +491,77 @@ async function submitFeedback(text: string) {
   color: var(--color-seal);
   font-size: 13px;
   text-align: center;
+}
+
+/* 统计口径是普通说明, 不用警示色 */
+.banner-note {
+  border-color: var(--color-line);
+  color: var(--color-ink-muted);
+}
+
+/* 闭馆态: 闲章 + 说明, 页面主角 */
+.closed-hero {
+  max-width: 640px;
+  margin: 0 auto 2rem;
+  padding: 2.25rem 1.5rem 1.9rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.closed-title {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 0.3rem 0 0;
+}
+
+.closed-sub {
+  margin: 0;
+  color: var(--color-ink-soft);
+  font-size: 14px;
+}
+
+.closed-note {
+  margin: 0.4rem 0 0;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--color-line);
+  color: var(--color-ink-muted);
+  font-size: 12.5px;
+}
+
+.hall-updated {
+  margin-left: 0.6rem;
+  font-size: 11.5px;
+  color: var(--color-ink-muted);
+}
+
+.refresh-btn {
+  margin-left: 0.5rem;
+  min-height: 30px;
+  padding: 0 0.7rem;
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  background: var(--color-card);
+  color: var(--color-teal);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  border-color: var(--color-teal);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* 排名列表: 博物馆展签式 */

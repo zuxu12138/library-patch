@@ -16,8 +16,9 @@ PY="$ROOT/.venv/Scripts/python.exe"
 [ -x "$PY" ] || PY="$ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
 
-# Windows 系统代理(Clash 等)会被 httpx 读取导致本机调用 502, 强制绕过
-export NO_PROXY="127.0.0.1,localhost,[::1]${NO_PROXY:+,$NO_PROXY}"
+# Windows 系统代理(Clash 等)会被 httpx 读取导致本机调用 502, 强制绕过。
+# 注意: 不要加 [::1] —— httpx 把 NO_PROXY 条目当 URL 解析, "[::1]" 会抛 Invalid port
+export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
 export no_proxy="$NO_PROXY"
 
 # 端口预检: 已被占用时直接报告, 不再打"全部已拉起"的假消息

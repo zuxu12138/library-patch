@@ -1,25 +1,38 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { fetchSeatMap, type SeatItem, type SeatMap } from "../api/seat";
 
 const props = defineProps<{ mapId: string; areaName: string }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const loading = ref(true);
+const refreshing = ref(false);
 const errorMessage = ref("");
 const map = ref<SeatMap | null>(null);
 const zoom = ref(1);
 const fullscreen = ref(false);
 
-onMounted(async () => {
+async function load(background = false) {
+  if (background) refreshing.value = true;
+  else loading.value = true;
+  errorMessage.value = "";
   try {
     map.value = await fetchSeatMap(props.mapId);
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "座位平面图加载失败";
+    // 静默刷新失败不清空已有图, 只在首次加载时占位报错
+    if (!map.value) {
+      errorMessage.value = err instanceof Error ? err.message : "座位平面图加载失败";
+    }
   } finally {
     loading.value = false;
+    refreshing.value = false;
   }
-});
+}
+
+onMounted(load);
+// 平面图展开期间每 60s 静默刷新, 座位状态(可约/已约/占用)随真实数据更新
+const refreshTimer = window.setInterval(() => load(true), 60_000);
+onUnmounted(() => window.clearInterval(refreshTimer));
 
 // 原始坐标边界；缩放时围绕平面中心收紧 viewBox。
 const bounds = computed(() => {
@@ -47,16 +60,39 @@ const dotR = computed(() => {
   return Math.max(12, span / 90);
 });
 
-function isUnavailable(s: SeatItem): boolean {
-  return (s.status ?? "").includes("不可预约");
+// 座位四态: 可预约(空闲) / 已预约 / 占用 / 不可预约(闭馆或停用)
+// 判定顺序敏感: "不可预约"含"预约"二字, 必须先判不可预约
+type SeatState = "free" | "reserved" | "busy" | "unavailable";
+function seatState(s: SeatItem): SeatState {
+  const status = s.status ?? "";
+  if (status.includes("不可预约")) return "unavailable";
+  if (status.includes("已预约") || status.includes("预约成功")) return "reserved";
+  return s.busy ? "busy" : "free";
 }
 
-const freeCount = computed(() => map.value?.seats.filter((s) => !s.busy && !isUnavailable(s)).length ?? 0);
-const unavailableCount = computed(() => map.value?.seats.filter(isUnavailable).length ?? 0);
+const STATE_LABEL: Record<SeatState, string> = {
+  free: "可预约",
+  reserved: "已被预约",
+  busy: "占用中",
+  unavailable: "不可预约",
+};
+
+const counts = computed(() => {
+  const c: Record<SeatState, number> = { free: 0, reserved: 0, busy: 0, unavailable: 0 };
+  for (const s of map.value?.seats ?? []) c[seatState(s)]++;
+  return c;
+});
+
+const isClosed = computed(() => map.value?.is_open === false);
+const openHoursLabel = computed(() => {
+  const [open, close] = map.value?.open_hours ?? [7, 22];
+  return `${String(open).padStart(2, "0")}:00 – ${String(close).padStart(2, "0")}:00`;
+});
 
 function seatLabel(s: SeatItem): string {
-  if (isUnavailable(s)) return s.busy ? "计入占用 · 不可预约" : "计入占用 · 不可预约";
-  return `${s.busy ? "系统标记占用" : "系统标记空闲"}${s.status ? ` · ${s.status}` : ""}`;
+  const state = seatState(s);
+  const extra = s.status && s.status !== STATE_LABEL[state] && state !== "unavailable" ? ` · ${s.status}` : "";
+  return `${s.seatNum} 号 · ${STATE_LABEL[state]}${extra}`;
 }
 
 function hasPower(s: SeatItem): boolean {
@@ -69,8 +105,15 @@ function hasPower(s: SeatItem): boolean {
   <div class="map-panel" :class="{ fullscreen }">
     <div class="map-head">
       <span class="map-title">{{ areaName }} · 座位平面</span>
-      <span v-if="map" class="map-count mono">可用 {{ freeCount }} · 占用 {{ map.count - freeCount }}（含不可预约 {{ unavailableCount }}） · 共 {{ map.count }}</span>
+      <span v-if="map" class="map-count mono">
+        可约 {{ counts.free }}<template v-if="counts.reserved"> · 已约 {{ counts.reserved }}</template>
+        <template v-if="counts.busy"> · 占用 {{ counts.busy }}</template>
+        <template v-if="counts.unavailable"> · 不可约 {{ counts.unavailable }}</template>
+         · 共 {{ map.count }}
+      </span>
+      <span v-if="map?.fetched_at" class="map-updated mono">{{ refreshing ? "刷新中…" : `更新于 ${map.fetched_at}` }}</span>
       <div class="map-actions">
+        <button type="button" class="map-tool wide" :disabled="refreshing" @click="load(true)">刷新</button>
         <button type="button" class="map-tool" aria-label="缩小" :disabled="zoom <= 1" @click="setZoom(zoom - 0.5)">−</button>
         <span class="zoom-value mono">{{ Math.round(zoom * 100) }}%</span>
         <button type="button" class="map-tool" aria-label="放大" :disabled="zoom >= 3" @click="setZoom(zoom + 0.5)">＋</button>
@@ -83,7 +126,8 @@ function hasPower(s: SeatItem): boolean {
     <p v-else-if="errorMessage" class="map-error" role="alert">{{ errorMessage }}</p>
 
     <template v-else-if="map">
-      <p v-if="unavailableCount" class="map-notice" role="status">不可预约按占用统计；占用数不代表实际在座人数。</p>
+      <p v-if="isClosed" class="map-notice closed" role="status">闭馆中 · 图为闭馆快照，全部座位暂停预约，{{ openHoursLabel }} 恢复服务</p>
+      <p v-else-if="counts.unavailable" class="map-notice" role="status">不可预约按占用统计；占用数不代表实际在座人数。</p>
       <div class="map-canvas">
       <svg :viewBox="viewBox" class="seat-map" role="img" :aria-label="`${areaName} 座位平面图`">
         <g v-for="s in map.seats" :key="s.seatId">
@@ -93,9 +137,9 @@ function hasPower(s: SeatItem): boolean {
             :width="dotR * 2"
             :height="dotR * 2"
             class="seat"
-            :class="{ unavailable: isUnavailable(s), busy: s.busy && !isUnavailable(s), free: !s.busy && !isUnavailable(s), power: hasPower(s) }"
+            :class="[seatState(s), { power: hasPower(s) }]"
           >
-            <title>{{ s.seatNum }} 号 · {{ seatLabel(s) }}{{ hasPower(s) ? " · 电源" : "" }}{{ s.seatType.includes("台灯") ? " · 台灯" : "" }}</title>
+            <title>{{ seatLabel(s) }}{{ hasPower(s) ? " · 电源" : "" }}{{ s.seatType.includes("台灯") ? " · 台灯" : "" }}</title>
           </rect>
           <!-- 电源座位的角标 -->
           <circle
@@ -111,7 +155,8 @@ function hasPower(s: SeatItem): boolean {
       </div>
 
       <div class="map-legend" aria-hidden="true">
-        <span class="lg"><i class="sw sw-free"></i>空闲</span>
+        <span class="lg"><i class="sw sw-free"></i>可预约</span>
+        <span class="lg"><i class="sw sw-reserved"></i>已预约</span>
         <span class="lg"><i class="sw sw-busy"></i>占用</span>
         <span class="lg"><i class="sw sw-unavailable"></i>不可预约</span>
         <span class="lg"><i class="sw sw-power"></i>电源座</span>
@@ -200,6 +245,12 @@ function hasPower(s: SeatItem): boolean {
   stroke: var(--color-ink-muted);
 }
 
+/* 已预约: 朱砂描边浅底, 与推荐角标同色系但面积受控 */
+.seat.reserved {
+  fill: #f5e3de;
+  stroke: var(--color-seal);
+}
+
 .seat.unavailable {
   fill: #eadbc5;
   stroke: #8a652f;
@@ -209,6 +260,24 @@ function hasPower(s: SeatItem): boolean {
 .map-notice {
   font-size: 12px;
   color: var(--color-ink-muted);
+}
+
+.map-notice.closed {
+  color: var(--color-seal);
+  border: 1px dashed var(--color-seal);
+  border-radius: 2px;
+  padding: 0.45rem 0.8rem;
+  text-align: center;
+}
+
+.map-updated {
+  font-size: 11.5px;
+  color: var(--color-ink-muted);
+}
+
+.sw-reserved {
+  background: #f5e3de;
+  border: 1px solid var(--color-seal);
 }
 
 .sw-unavailable {

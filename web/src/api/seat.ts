@@ -16,6 +16,9 @@ export interface SeatPrediction {
   personalization?: { applied: boolean; note: string; memory_ids: string[] };
   ranking: SeatRankingItem[];
   realtime_available: boolean;
+  is_open: boolean;              // 所选时段是否在开馆时间(07:00–22:00)内
+  open_hours: number[];          // [开馆小时, 闭馆小时), 如 [7, 22]
+  fetched_at: string | null;     // 实时数据拉取时刻 "HH:MM"; 闭馆/降级时为 null
 }
 
 export interface SeatItem {
@@ -25,13 +28,16 @@ export interface SeatItem {
   y: number;
   busy: boolean;
   seatType: string;
-  status: string;
+  status: string;   // 预约状态原文: 可预约 / 已预约 / 不可预约(闭馆) 等
 }
 
 export interface SeatMap {
   mapId: string;
   count: number;
   seats: SeatItem[];
+  is_open?: boolean;
+  fetched_at?: string;      // 拉取时刻 "HH:MM"
+  open_hours?: number[];    // [开馆小时, 闭馆小时)
 }
 
 export async function predictSeats(weekday: number, hour: number): Promise<SeatPrediction> {

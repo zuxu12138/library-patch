@@ -62,6 +62,8 @@
 - `avg_occupancy_rate` 0~1,渲染成百分比进度条/柱子
 - `free_now`/`total` 是实时空闲数,可标注「当前空 80/80」;`samples` 是历史采样点数,少时提示「预测置信度低」
 - `realtime_available=false` 时实时字段为 null,UI 应显示「仅历史数据」横幅
+- `is_open` 标记所选时段是否在开馆时间(07:00–22:00,见 `open_hours`)内;**闭馆时段后端跳过实时拉取**(座位系统闭馆后返回"全空"假象),实时字段为 null,UI 应展示「已闭馆 · 暂停服务」界面
+- `fetched_at` 实时数据拉取时刻(HH:MM,Asia/Shanghai),闭馆/降级时为 null
 
 ```json
 {
@@ -91,10 +93,19 @@
         "total": 532
       }
     ],
-    "realtime_available": true
+    "realtime_available": true,
+    "is_open": true,
+    "open_hours": [7, 22],
+    "fetched_at": "14:03"
   }
 }
 ```
+
+## POST /seat/map — 单座级实时平面图
+
+请求体: `{"map_id": "2528"}`。透传座位系统单座状态并附带 `is_open` / `fetched_at` / `open_hours`。
+- `seats[]` 字段: seatId / seatNum / x / y(平面图像素坐标) / busy / seatType(电源|台灯) / status(预约状态原文)
+- `status` 实测取值: 开馆时「可预约 / 已预约」等;**闭馆后全场「不可预约」**——UI 四态: 可预约(teal 描边) / 已预约(朱砂) / 占用(墨灰) / 不可预约(赭黄虚线),判定时注意「不可预约」含「预约」二字,须先判
 
 ## POST /knowledge/graph — 引用关系图
 

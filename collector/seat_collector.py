@@ -35,7 +35,7 @@ CN_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")  # 时区写死, 不�
 DEFAULT_INTERVAL = 600
 
 # ===== 限流器(演示期省资源; 要全量采集时改这两个常量或删掉窗口判断即可) =====
-COLLECT_OPEN_HOURS = (7, 23)   # 只在开馆时段采集(Asia/Shanghai), 闭馆数据对预测没价值
+COLLECT_OPEN_HOURS = (7, 22)   # 只在开馆时段采集(Asia/Shanghai, 07:00–22:00), 闭馆数据对预测没价值
 SEAT_EVERY_N_TICKS = 3         # 单座级每 N 个 tick 才采一次(一次 15 层请求,区域级每次都采)
 # ===========================================================================
 

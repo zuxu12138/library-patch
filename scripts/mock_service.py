@@ -39,6 +39,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(load("opac-search-deep-learning.json"))
         elif url.path == "/api/seats/now":
             self._send(load("seats-now.json"))
+        elif url.path == "/api/seats/map":
+            # 录制的令希 2F 真实平面图(闭馆态快照, 498 座); mapid 透传请求参数
+            payload = load("seats-map.json")
+            mapid = parse_qs(url.query).get("mapid", [""])[0]
+            if mapid:
+                payload["data"]["mapId"] = mapid
+            self._send(payload)
         elif url.path == "/api/health":
             self._send({"code": 0, "msg": "ok", "data": {"status": "ok", "mode": "mock"}})
         else:
