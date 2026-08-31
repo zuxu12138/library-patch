@@ -39,15 +39,174 @@
 
 Agent 与 Java 层之间带内部 token 鉴权，所有请求携带 `X-Trace-Id` 贯穿两层日志，排查问题时可串联完整链路。
 
-### 关键工程保障
+### 记忆机制
 
-- **幂等反馈**：`user_id + 反馈内容` 算 hash 去重，防止手快多点导致记忆被重复强化
-- **多用户隔离**：记忆按 `user_id` 隔离，趁数据少先加，日后不改
-- **WAL + busy_timeout**：采集器写 + P2 预测读共享 SQLite，开启 WAL 模式避免 `database is locked`
-- **采集器常驻**：macOS launchd `KeepAlive=true`，崩溃自动重启
-- **数据备份**：SQLite 持续同步到对象存储（Litestream），或定时在线备份轮转
-- **失败 vs 空数据分离**：采集器网络失败和确实无数据分开记录，预测模型不会把超时当成"没人"
-- **LLM 可选配置**：记忆抽取、查询精炼、文献摘要三个功能依赖 LLM，需配置 `LLM_API_KEY` 后启用；未配置时系统自动降级，找书、座位预测等基础功能不受影响
+系统为三大功能（找书 / 知识地图 / 座位预测）提供统一的反馈记忆能力，形成"使用 → 反馈 → 记忆沉淀 → 下次使用更懂你"的闭环。记忆按 `user_id` 隔离，LLM 未配置时记忆功能静默降级，不影响主流程。
+
+---
+
+#### 记忆数据模型
+
+每条记忆是一个 `MemoryEntry`，由 LLM 从用户反馈中抽取或直接记录：
+
+| 字段 | 说明 |
+|------|------|
+| `entry_id` | UUID，主键 |
+| `user_id` | 用户标识，实现多用户隔离 |
+| `type` | 记忆类型：`preference`（偏好）/ `rule`（规则）/ `episode`（事件） |
+| `subject` | 主题，如"找书""座位预测" |
+| `content` | 记忆正文 |
+| `applies_to` | 适用功能范围，`"*"` 表示通配所有功能 |
+| `confidence` | 置信度 0~1，新记忆默认 0.8 |
+| `dedup_hash` | 幂等键：`SHA1(user_id + "\x00" + content)`，同一用户相同内容只存一次 |
+| `created_at` / `updated_at` | 时间戳，用于时间衰减排序 |
+
+---
+
+#### 反馈入环流程
+
+用户提交反馈（如"我喜欢靠窗的位置""以后只看近五年的论文"）后，系统按以下步骤处理：
+
+```
+用户反馈
+  │
+  ▼
+① 幂等去重
+   计算 feedback_hash = SHA1(user_id + "\x00" + feedback)
+   查 feedback_dedup 表 → 已存在则直接返回缓存的 entry_ids（防手快多点）
+  │
+  ▼
+② LLM 抽取结构化记忆
+   调用 MemoryExtractor.extract()：
+   - 携带该用户最近 10 条已有记忆（供 LLM 判断矛盾）
+   - LLM JSON mode + pydantic 校验，抽取 0~3 条 MemoryEntry
+   - 若 LLM 未配置或校验两次均失败，返回 []（静默降级）
+  │
+  ▼
+③ 写入记忆库
+   调用 MemoryStore.add(entry)：
+   - 按 dedup_hash 幂等：UNIQUE 索引冲突 → 返回已有 entry_id
+   - 同时写入 memory_fts（FTS5 全文检索虚拟表）
+  │
+  ▼
+④ 矛盾消解
+   若 LLM 判定本次反馈与某条旧记忆直接矛盾（如"喜欢靠窗" vs "喜欢靠门"）：
+   - 对矛盾旧记忆执行 adjust_confidence(entry_id, factor=0.5) 降权
+   - 非直接矛盾（如"靠窗" vs "安静"）不互相干扰
+  │
+  ▼
+⑤ 缓存反馈映射
+   feedback_dedup[feedback_hash] = [新 entry_ids]
+   下次相同反馈直接命中，不再重复 LLM 调用
+```
+
+---
+
+#### 记忆存储结构
+
+记忆数据存储在 SQLite 中，共三张表：
+
+**`memory` 表** — 主表，存储所有记忆条目
+
+```sql
+CREATE TABLE memory (
+    entry_id    TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    subject     TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    applies_to  TEXT NOT NULL DEFAULT '*',
+    confidence  REAL NOT NULL DEFAULT 0.8,
+    source      TEXT NOT NULL DEFAULT '',
+    dedup_hash  TEXT NOT NULL UNIQUE,   -- 幂等去重键
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+);
+CREATE INDEX idx_memory_user ON memory(user_id);
+```
+
+**`memory_fts` 表** — FTS5 trigram 全文检索虚拟表
+
+```sql
+CREATE VIRTUAL TABLE memory_fts USING fts5(
+    entry_id UNINDEXED,
+    subject,
+    content,
+    tokenize='trigram'  -- trigram 对中文子串检索友好，3 字及以上可命中
+);
+```
+
+**`feedback_dedup` 表** — 反馈级幂等缓存
+
+```sql
+CREATE TABLE feedback_dedup (
+    feedback_hash TEXT PRIMARY KEY,
+    entry_ids     TEXT NOT NULL  -- JSON 数组，如 ["a1b2", "c3d4"]
+);
+```
+
+**WAL 模式**：数据库启用 `PRAGMA journal_mode=WAL`，支持读写并发（采集器写入 + P2 预测读取共享数据库）。
+
+---
+
+#### 记忆检索机制
+
+`MemoryRetriever.retrieve()` 按以下策略召回记忆：
+
+**1. 多路召回**
+
+- **FTS 相关性召回**：用 `query_text` 在 `memory_fts` 做 trigram 全文检索（≥3 字触发），命中的记忆优先进入结果。
+- **范围/主题召回**：按 `applies_to`（功能范围）+ `subject`（主题）无条件召回该范围内所有记忆，补全 FTS 可能错杀的偏好类记忆（如"只看近五年"与当前查询词无字面重合）。
+
+**2. 去重与过滤**
+
+- 两路召回结果合并去重
+- 过滤 `confidence < min_confidence`（默认 0.0）的记忆
+
+**3. 时间衰减排序**
+
+按 `confidence × time_decay(created_at, now)` 综合得分降序排列，取 `top_k`：
+
+```
+time_decay = 0.5 ^ (age / (half_life_days × 86400))
+```
+
+默认半衰期 `half_life_days = 30`，即 30 天前记忆的衰减因子为 0.5。这意味着"上周喜欢靠窗"不会永远压过"昨天喜欢靠门"。
+
+**4. 渲染提示词**
+
+`to_prompt_block()` 将命中的记忆格式化为紧凑提示词，供 LLM 精炼检索词：
+
+```
+【用户记忆】
+- [preference/找书] 只看近五年的中文论文 (置信度 0.85)
+- [preference/座位预测] 喜欢靠窗位置 (置信度 0.80)
+```
+
+---
+
+#### 三大功能如何使用记忆
+
+| 功能 | 记忆主题 | applies_to | 如何使用 |
+|------|---------|------------|---------|
+| **找书** | `"找书"` | `"findbook"` | 检索时注入用户偏好（如"只看近五年"），Planner 精炼检索词；反馈时抽取偏好/规则记忆 |
+| **知识地图** | `"知识地图"` | `"knowledge_map"` | 检索时注入阅读偏好；反馈时抽取文献类型偏好、研究兴趣 |
+| **座位预测** | `"座位预测"` | `"seat_predict"` | 检索时注入座位偏好（如"喜欢靠门"），Planner 可调整推荐逻辑；反馈时抽取偏好/规则记忆 |
+
+---
+
+#### LLM 可选配置
+
+记忆功能依赖 LLM（记忆抽取 + 查询精炼），但**未配置时系统自动降级，不影响主流程**：
+
+| 场景 | LLM 未配置时行为 |
+|------|----------------|
+| 反馈提交 | `MemoryExtractor.extract()` 直接返回 `[]`，反馈不入环，前端仍显示"反馈已收到" |
+| 查询精炼 | `Planner.plan()` 直接原样透传检索词，`plan_note` 为空 |
+| 找书 / 座位预测 | 基础功能完全正常，只是没有记忆增强 |
+| 知识地图 | 搜索 / 图谱 / 摘要功能正常（摘要依赖 LLM，未配置时返回降级提示） |
+
+配置方式：在 `.env` 中设置 `LLM_API_KEY`、`LLM_BASE_URL`（可选，默认 OpenAI 官方）、`LLM_MODEL`（默认 `gpt-4o-mini`）。参考 `agent/.env.example`。
 
 ### 适用场景
 
