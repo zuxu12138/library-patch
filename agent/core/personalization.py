@@ -42,7 +42,7 @@ def personalize(output, feature, memories):
                             delta += sign * 2
                             why.append(('避开' if sign < 0 else '偏好') + digit+'层')
                     if any(t in clause for t in ['空闲','人少','不拥挤','空位多']):
-                        delta += 1 - row.get('avg_occupancy_rate', 1)
+                        delta += 1 - (row.get('avg_occupancy_rate') if row.get('avg_occupancy_rate') is not None else 1)
                         why.append('按占用率匹配人少偏好')
                 elif index > 0:
                     for triggers, words in [(['综述'],['survey','review','综述']),(['扩散'],['diffusion','扩散']),(['图像'],['image','visual','图像']),(['入门'],['introduction','tutorial','入门']),(['强化学习'],['reinforcement','强化学习'])]:
@@ -75,9 +75,9 @@ def personalize(output, feature, memories):
         if seat:
             def order(pair):
                 i, score, row = pair
-                free = row.get('free_now')
+                free = row.get('predicted_available') if output.get('mode') == 'plan' else row.get('free_now')
                 tier = 0 if free is not None and free > 0 else (2 if free == 0 else 1)
-                return tier, -score, row.get('avg_occupancy_rate', 1), i
+                return tier, -score, (row.get('avg_occupancy_rate') if row.get('avg_occupancy_rate') is not None else 1), i
             scored.sort(key=order)
         else:
             scored = scored[:1] + sorted(scored[1:], key=lambda x: -x[1])

@@ -19,6 +19,7 @@
     python3 seat_collector.py loop 300    # 自定义间隔秒数
 """
 import json
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import sys
 import time
@@ -119,6 +120,16 @@ def init_db():
         );
         """
     )
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS area_availability (
+            ts TEXT, epoch INTEGER, weekday INTEGER, hhmm TEXT, libcode TEXT,
+            mapid TEXT, area_name TEXT, total INTEGER, available INTEGER,
+            occupied INTEGER, unavailable INTEGER, unknown INTEGER);
+        CREATE INDEX IF NOT EXISTS availability_time ON area_availability(epoch, weekday, hhmm);
+        CREATE TABLE IF NOT EXISTS seat_status_snapshot (
+            ts TEXT, epoch INTEGER, mapid TEXT, seatid TEXT, seatnum TEXT,
+            seattype TEXT, raw_isbusy TEXT, raw_status TEXT, state TEXT, mappos TEXT);
+    """)
     conn.commit()
     return conn
 
@@ -165,25 +176,53 @@ def collect_areas(conn, now):
         log_fetch(conn, now, "area", FETCH_EMPTY, "no maparea")  # 抓到了但真没数据
         return 0
 
-    # maplist 键统一用 mapid(与 id 同值, 已对照真实接口确认), 键转 str 防类型漂移
-    libmap = {str(m.get("mapid")): m.get("libcode") for m in data.get("maplist", [])}
-    rows = []
-    for a in areas:
-        mapid = str(a.get("mapid"))
-        name = a.get("name", "")
-        free, total = parse_free_total(name)
-        if total is None:
-            total = a.get("ct")
-        occupied = (total - free) if (total is not None and free is not None) else None
-        rows.append((
-            now["ts"], now["epoch"], now["weekday"], now["hhmm"],
-            libmap.get(mapid),
-            mapid, name, total, free, occupied,
-        ))
-    conn.executemany("INSERT INTO area_snapshot VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+    # 单座没有区域 id，按楼层汇总不可预约与已占用，避免猜测阅览室归属。
+    def fetch_floor(m):
+        mapid = str(m.get("mapid"))
+        status, text = http_get(f"{BASE}Seatresv/GetSeatList.asp?libid={LIBID}&mapid={mapid}")
+        if status == FETCH_FAIL:
+            raise ValueError(f"mapid={mapid} http failed")
+        seats = json.loads(text).get("seats", [])
+        if not seats:
+            raise ValueError(f"mapid={mapid} no seats")
+        counts = {state: 0 for state in ('available','occupied','unavailable','unknown')}
+        for seat in seats: counts[seat_state(seat)] += 1
+        occupied = counts['occupied'] + counts['unavailable']
+        total = len(seats)
+        return (now["ts"], now["epoch"], now["weekday"], now["hhmm"],
+                m.get("libcode"), mapid, m.get("name", ""), total, counts["available"],
+                counts["occupied"], counts["unavailable"], counts["unknown"])
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            rows = list(pool.map(fetch_floor, data.get("maplist", [])))
+        if not rows:
+            raise ValueError("no floors")
+    except (ValueError, TypeError) as exc:
+        log_fetch(conn, now, "area", FETCH_FAIL, str(exc))
+        return 0
+    conn.executemany("INSERT INTO area_availability VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    legacy = [row[:8] + (row[8], row[9] + row[10]) for row in rows]
+    conn.executemany("INSERT INTO area_snapshot VALUES (?,?,?,?,?,?,?,?,?,?)", legacy)
     log_fetch(conn, now, "area", FETCH_OK, f"{len(rows)} areas")
     conn.commit()
     return len(rows)
+
+
+def seat_state(seat):
+    status = str(seat.get('status') or '').strip()
+    busy = str(seat.get('isbusy')).lower()
+    if '不可预约' in status:
+        return 'unavailable'
+    if busy in ('true','1'):
+        return 'occupied'
+    if busy in ('false','0') and status in ('可预约','空闲','可用'):
+        return 'available'
+    return 'unknown'
+
+
+def is_occupied(seat):
+    return (str(seat.get("isbusy")).lower() in ("true", "1")
+            or "不可预约" in str(seat.get("status", "")))
 
 
 def collect_seats(conn, now, mapids):
@@ -206,13 +245,17 @@ def collect_seats(conn, now, mapids):
         rows = []
         for s in seats:
             # isbusy 真实值是字符串 "true"/"false", 兼容 "1"/1 防接口字段漂移
-            busy = 1 if str(s.get("isbusy")).lower() in ("true", "1") else 0
+            busy = int(is_occupied(s))
             rows.append((
                 now["ts"], now["epoch"], now["weekday"], now["hhmm"],
                 str(mapid), s.get("seatid"), s.get("seatnum"),
                 s.get("seattype"), busy,
             ))
         conn.executemany("INSERT INTO seat_snapshot VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        conn.executemany("INSERT INTO seat_status_snapshot VALUES (?,?,?,?,?,?,?,?,?,?)", [
+            (now['ts'], now['epoch'], str(mapid), s.get('seatid'), s.get('seatnum'),
+             s.get('seattype'), json.dumps(s.get('isbusy')), s.get('status'), seat_state(s), s.get('mappos'))
+            for s in seats])
         total_rows += len(rows)
         time.sleep(0.5)  # 对第三方接口温和一点
     conn.commit()  # 整 tick 一次 commit: 15 层楼从 ~30 次 fsync 降为 1 次

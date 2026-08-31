@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { fetchSeatMap, type SeatItem, type SeatMap } from "../api/seat";
 
-const props = defineProps<{ mapId: string; areaName: string }>();
+const props = defineProps<{ mapId: string; areaName: string; closed?: boolean; planned?: boolean }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const loading = ref(true);
@@ -51,12 +51,19 @@ function isUnavailable(s: SeatItem): boolean {
   return (s.status ?? "").includes("不可预约");
 }
 
-const freeCount = computed(() => map.value?.seats.filter((s) => !s.busy && !isUnavailable(s)).length ?? 0);
+function state(s: SeatItem) {
+  if (isUnavailable(s)) return 'unavailable';
+  if (s.busy) return 'occupied';
+  if (['可预约','空闲','可用'].includes(s.status?.trim())) return 'available';
+  return 'unknown';
+}
+const freeCount = computed(() => map.value?.seats.filter((s) => state(s)==='available').length ?? 0);
+const occupiedCount = computed(() => map.value?.seats.filter((s) => state(s)==='occupied').length ?? 0);
+const unknownCount = computed(() => map.value?.seats.filter((s) => state(s)==='unknown').length ?? 0);
 const unavailableCount = computed(() => map.value?.seats.filter(isUnavailable).length ?? 0);
 
 function seatLabel(s: SeatItem): string {
-  if (isUnavailable(s)) return s.busy ? "计入占用 · 不可预约" : "计入占用 · 不可预约";
-  return `${s.busy ? "系统标记占用" : "系统标记空闲"}${s.status ? ` · ${s.status}` : ""}`;
+  return ({available:'可用', occupied:'系统标记已占用', unavailable:'不可预约', unknown:'未知'})[state(s)] + (s.status ? ` · ${s.status}` : '');
 }
 
 function hasPower(s: SeatItem): boolean {
@@ -69,7 +76,7 @@ function hasPower(s: SeatItem): boolean {
   <div class="map-panel" :class="{ fullscreen }">
     <div class="map-head">
       <span class="map-title">{{ areaName }} · 座位平面</span>
-      <span v-if="map" class="map-count mono">可用 {{ freeCount }} · 占用 {{ map.count - freeCount }}（含不可预约 {{ unavailableCount }}） · 共 {{ map.count }}</span>
+      <span v-if="map" class="map-count mono">{{ (closed || planned) ? "系统标记可用" : "可用" }} {{ freeCount }} · 已占用 {{ occupiedCount }} · 不可预约 {{ unavailableCount }} · 未知 {{ unknownCount }} · 共 {{ map.count }}</span>
       <div class="map-actions">
         <button type="button" class="map-tool" aria-label="缩小" :disabled="zoom <= 1" @click="setZoom(zoom - 0.5)">−</button>
         <span class="zoom-value mono">{{ Math.round(zoom * 100) }}%</span>
@@ -83,7 +90,9 @@ function hasPower(s: SeatItem): boolean {
     <p v-else-if="errorMessage" class="map-error" role="alert">{{ errorMessage }}</p>
 
     <template v-else-if="map">
-      <p v-if="unavailableCount" class="map-notice" role="status">不可预约按占用统计；占用数不代表实际在座人数。</p>
+      <p v-if="planned" class="map-notice" role="status">此图展示楼层布局与当前系统状态，不是所选时段的预测，也不代表届时可预约。</p>
+      <p v-if="closed" class="map-notice" role="status">已闭馆：平面图仅展示布局与系统返回状态，不表示当前可以入馆使用或预约。</p>
+      <p v-if="unavailableCount" class="map-notice" role="status">不可预约计入不可用，不等同于有人；未知状态不计入空位。</p>
       <div class="map-canvas">
       <svg :viewBox="viewBox" class="seat-map" role="img" :aria-label="`${areaName} 座位平面图`">
         <g v-for="s in map.seats" :key="s.seatId">
@@ -93,7 +102,7 @@ function hasPower(s: SeatItem): boolean {
             :width="dotR * 2"
             :height="dotR * 2"
             class="seat"
-            :class="{ unavailable: isUnavailable(s), busy: s.busy && !isUnavailable(s), free: !s.busy && !isUnavailable(s), power: hasPower(s) }"
+            :class="{ unavailable: isUnavailable(s), busy: state(s)==='occupied', free: state(s)==='available', unknown: state(s)==='unknown', power: hasPower(s) }"
           >
             <title>{{ s.seatNum }} 号 · {{ seatLabel(s) }}{{ hasPower(s) ? " · 电源" : "" }}{{ s.seatType.includes("台灯") ? " · 台灯" : "" }}</title>
           </rect>
@@ -111,7 +120,8 @@ function hasPower(s: SeatItem): boolean {
       </div>
 
       <div class="map-legend" aria-hidden="true">
-        <span class="lg"><i class="sw sw-free"></i>空闲</span>
+        <span class="lg"><i class="sw sw-free"></i>可用</span>
+        <span class="lg"><i class="sw sw-unknown"></i>未知</span>
         <span class="lg"><i class="sw sw-busy"></i>占用</span>
         <span class="lg"><i class="sw sw-unavailable"></i>不可预约</span>
         <span class="lg"><i class="sw sw-power"></i>电源座</span>
@@ -122,6 +132,7 @@ function hasPower(s: SeatItem): boolean {
 </template>
 
 <style scoped>
+.seat.unknown, .sw-unknown { fill:#c5cbd2; background:#c5cbd2; stroke:#6c7885; }
 .map-panel {
   margin: 0.35rem 0 0.75rem;
   padding: 0.9rem 1rem;

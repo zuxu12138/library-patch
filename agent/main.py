@@ -176,6 +176,7 @@ class PaperQueryBody(BaseModel):
 
 
 class SeatPredictBody(BaseModel):
+    mode: str = Field(default="now", pattern="^(now|plan)$")
     weekday: int = Field(ge=1, le=7)
     hour: int = Field(ge=0, le=23)
 
@@ -266,7 +267,7 @@ async def seat_predict(
     service: SeatPredictService = Depends(get_seat_service),
 ):
     result = await service.predict(
-        weekday=body.weekday, hour=body.hour, user_id=user_id, trace_id=trace_id,
+        weekday=body.weekday, hour=body.hour, user_id=user_id, trace_id=trace_id, mode=body.mode,
     )
     return envelope(0, "ok", _unwrap_output(result))
 

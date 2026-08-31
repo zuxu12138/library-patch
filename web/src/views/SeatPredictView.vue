@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { predictSeats, sendFeedback, type SeatPrediction } from "../api/seat";
 import ErrorState from "../components/ErrorState.vue";
 import FeedbackFab from "../components/FeedbackFab.vue";
 import LoadingState from "../components/LoadingState.vue";
 import SeatMapPanel from "../components/SeatMapPanel.vue";
 import SealStamp from "../components/SealStamp.vue";
-import SeatSparkline from "../components/SeatSparkline.vue";
+
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 const LIB_NAMES: Record<string, string> = {
@@ -15,6 +15,9 @@ const LIB_NAMES: Record<string, string> = {
   panjin: "盘锦",
   kaifaqu: "开发区",
 };
+const mode = ref<"now" | "plan">("now");
+let requestId = 0;
+let refreshTimer: number;
 const now = new Date();
 const weekday = ref(now.getDay() === 0 ? 7 : now.getDay());
 const hour = ref(now.getHours());
@@ -62,16 +65,20 @@ function onTimeChange() {
 }
 
 async function predict() {
+  const request = ++requestId;
+  prediction.value = null;
   loading.value = true;
   errorMessage.value = "";
   expandedMap.value = null;
   try {
-    prediction.value = await predictSeats(weekday.value, hour.value);
+    const result = await predictSeats(weekday.value, hour.value, mode.value);
+    if (request === requestId) prediction.value = result;
   } catch (err) {
+    if (request !== requestId) return;
     errorMessage.value = err instanceof Error ? err.message : "出了点问题，请稍后再试";
     prediction.value = null;
   } finally {
-    loading.value = false;
+    if (request === requestId) loading.value = false;
   }
 }
 
@@ -80,7 +87,9 @@ function toggleMap(areaName: string, mapId: string | null) {
   expandedMap.value = expandedMap.value === areaName ? null : areaName;
 }
 
-onMounted(predict);
+onMounted(() => { predict(); refreshTimer = window.setInterval(() => { if (mode.value === 'now') predict(); }, 60000); });
+onBeforeUnmount(() => { requestId++; clearInterval(refreshTimer); clearTimeout(debounceTimer); });
+function updated(value?: string) { return value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '尚无记录'; }
 
 async function submitFeedback(text: string) {
   return await sendFeedback(text);
@@ -91,11 +100,15 @@ async function submitFeedback(text: string) {
   <section class="seat">
     <header class="page-head">
       <h1 class="page-title">座位预测</h1>
-      <p class="page-sub">按历史规律与实时占用，挑一个最可能有位置的阅览室</p>
+      <p class="page-sub">先查看现在可用的位置，再参考历史安排学习计划</p>
     </header>
 
+    <div class="mode-tabs" role="group" aria-label="查看方式">
+      <button :class="{active:mode==='now'}" @click="mode='now'; predict()">现在去 · 可用性推荐</button>
+      <button :class="{active:mode==='plan'}" @click="mode='plan'; predict()">计划去 · 历史参考</button>
+    </div>
     <!-- 时间轴: 星期 + 24h 滑杆 -->
-    <div class="timeline">
+    <div v-if="mode === 'plan'" class="timeline">
       <div class="weekdays" role="tablist" aria-label="星期">
         <button
           v-for="(w, i) in WEEKDAYS"
@@ -129,19 +142,12 @@ async function submitFeedback(text: string) {
       </p>
     </div>
 
-    <!-- 降级横幅: 实时数据不可用时 -->
-    <p v-if="prediction && !prediction.realtime_available" class="banner" role="status">
-      实时座位数据暂不可达，以下为纯历史预测
-    </p>
-
-    <p v-if="prediction?.realtime_available" class="banner" role="status">
-      统计口径：已占用或不可预约均计入占用，按楼层汇总，优先使用每 5 分钟采集的最新数据；不代表实际在馆人数。
-    </p>
-
+    <p v-if="prediction" class="banner" role="status">{{ prediction.message }}</p>
+    <p v-if="mode==='now' && prediction && !prediction.closed && !filteredRanking.some(r => r.recommendable)" class="banner" role="status">暂无确认可用座位。不可预约不等于有人，过期或未知状态不算空座。</p>
     <p v-if="prediction?.personalization" class="banner" role="status">{{ prediction.personalization.note }}</p>
     <!-- 全馆实时汇总 + 分馆筛选 -->
-    <div v-if="hallSummary" class="hall-bar">
-      <span class="hall-total">
+    <div v-if="prediction" class="hall-bar">
+      <span v-if="hallSummary && mode==='now'" class="hall-total">
         可用空座 <strong class="mono">{{ hallSummary.free }}</strong
         ><span class="dim mono"> / {{ hallSummary.total }}</span>
       </span>
@@ -178,7 +184,7 @@ async function submitFeedback(text: string) {
         :style="{ animationDelay: `${i * 50}ms` }"
       >
         <span class="rank-no mono">{{ String(i + 1).padStart(2, "0") }}</span>
-        <span v-if="i === 0 && r.avg_occupancy_rate < 1 && r.free_now !== 0" class="rec-badge">推荐</span>
+        <span v-if="i === 0 && r.recommendable" class="rec-badge">推荐</span>
         <div class="rank-main">
           <button
             type="button"
@@ -192,38 +198,35 @@ async function submitFeedback(text: string) {
               <span v-if="r.map_id" class="map-hint">{{ expandedMap === r.area_name ? "收起地图 ▴" : "座位平面图 ▾" }}</span>
             </span>
           </button>
-          <div class="bar-track" role="img" :aria-label="`预测占用率 ${Math.round(r.avg_occupancy_rate * 100)}%`">
-            <div
-              class="bar-fill"
-              :class="{ hot: r.avg_occupancy_rate >= 0.6 }"
-              :style="{ width: `${Math.round(r.avg_occupancy_rate * 100)}%` }"
-            ></div>
-          </div>
-          <p v-if="r.samples < 4" class="low-samples">历史样本少（{{ r.samples }} 次），预测置信度低</p>
+          <template v-if="mode==='now'">
+            <p v-if="prediction?.closed" class="status-counts">已闭馆 · 22:00 起暂停推荐</p>
+            <p class="status-counts" v-if="r.fresh">已占用 {{ r.occupied_now }} · 不可预约 {{ r.unavailable_now }} · 未知 {{ r.unknown_now }}</p>
+            <p class="low-samples">采集于 {{ updated(r.updated_at) }}（北京时间）{{ prediction?.closed ? ' · 最近快照，不用于闭馆时段推荐' : r.fresh ? '' : ' · 数据已过期，可用情况未知' }}</p>
+          </template>
+          <template v-else>
+            <p v-if="r.predicted_available != null" class="status-counts">历史平均可用约 {{ r.predicted_available }} 座 / {{ r.total }}</p>
+            <p v-else class="low-samples">历史数据不足，暂不估算空位。</p>
+            <p class="low-samples">同星期、同时段有效样本：{{ r.sample_days ?? 0 }} 个不同日期（不含当天）</p>
+          </template>
           <p v-if="r.preference_reason" class="preference-note">{{ r.preference_reason }}</p>
           <!-- 座位平面图下钻 -->
           <SeatMapPanel
             v-if="expandedMap === r.area_name && r.map_id"
             :map-id="r.map_id"
+            :closed="prediction?.closed"
+            :planned="mode === 'plan'"
             :area-name="r.area_name.replace(/\s*\d+\/\d+\s*$/, '')"
             @close="expandedMap = null"
           />
         </div>
-        <SeatSparkline
-          :area-name="r.area_name"
-          :weekday="weekday"
-          :hour="hour"
-          :rate="r.avg_occupancy_rate"
-          class="spark"
-        />
-        <span class="rate mono">{{ Math.round(r.avg_occupancy_rate * 100) }}%</span>
+        <span class="rate mono">{{ mode==='now' ? (prediction?.closed ? '已闭馆' : r.free_now == null ? '未知' : r.free_now + ' 座可用') : (r.predicted_available == null ? '样本不足' : '历史参考') }}</span>
       </li>
     </ol>
 
     <div v-else-if="prediction" class="empty-state">
       <SealStamp variant="idle" text="无座" />
       <p class="empty-title">这个时段还没有数据</p>
-      <p class="empty-sub">采集器正在攒历史，换个时段试试</p>
+      <p class="empty-sub">采集器正在积累可用性数据，请稍后刷新</p>
     </div>
 
     <FeedbackFab
@@ -235,6 +238,11 @@ async function submitFeedback(text: string) {
 </template>
 
 <style scoped>
+.mode-tabs { display:flex; justify-content:center; gap:12px; margin:20px 0; }
+.mode-tabs button { padding:12px 18px; border:1px solid var(--color-line); background:var(--color-card); cursor:pointer; }
+.mode-tabs button.active { background:var(--color-teal); color:white; }
+.status-counts { font-size:13px; color:var(--color-ink-soft); margin:8px 0; }
+
 .preference-note { color: var(--color-teal); font-size: 12px; }
 .page-head {
   text-align: center;
