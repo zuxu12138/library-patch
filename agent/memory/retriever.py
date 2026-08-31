@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from agent.memory.store import MemoryStore
+from agent.core.personalization import belongs
 
 
 class MemoryRetriever:
@@ -26,6 +27,8 @@ class MemoryRetriever:
         与查询词（如"深度学习"）往往无字面重合，纯 FTS 过滤会把它们错杀。
         做法：FTS 命中的排前面，其余按置信度×衰减排后，共同进入 top_k。
         """
+        if applies_to is not None:
+            subject = None  # Human-readable topics are not feature identifiers.
         matched: list = []
         if query_text:
             matched = self.store.query(
@@ -37,6 +40,8 @@ class MemoryRetriever:
         seen: set = set()
         out: list = []
         for e in matched + scoped:  # matched 优先,scoped 补齐
+            if applies_to is not None and not belongs(e, applies_to):
+                continue
             if e.entry_id in seen:
                 continue
             seen.add(e.entry_id)

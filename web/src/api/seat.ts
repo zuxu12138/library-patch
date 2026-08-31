@@ -1,6 +1,8 @@
 import { http, unwrap } from "./client";
 
 export interface SeatRankingItem {
+  preference_score?: number;
+  preference_reason?: string;
   area_name: string;
   avg_occupancy_rate: number;
   samples: number;          // 历史采样点数, <4 时提示置信度低
@@ -11,6 +13,7 @@ export interface SeatRankingItem {
 }
 
 export interface SeatPrediction {
+  personalization?: { applied: boolean; note: string; memory_ids: string[] };
   ranking: SeatRankingItem[];
   realtime_available: boolean;
 }

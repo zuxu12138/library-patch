@@ -134,10 +134,15 @@ async function submitFeedback(text: string) {
       实时座位数据暂不可达，以下为纯历史预测
     </p>
 
+    <p v-if="prediction?.realtime_available" class="banner" role="status">
+      统计口径：已占用或不可预约均计入占用，按楼层汇总，优先使用每 5 分钟采集的最新数据；不代表实际在馆人数。
+    </p>
+
+    <p v-if="prediction?.personalization" class="banner" role="status">{{ prediction.personalization.note }}</p>
     <!-- 全馆实时汇总 + 分馆筛选 -->
     <div v-if="hallSummary" class="hall-bar">
       <span class="hall-total">
-        全馆当前空位 <strong class="mono">{{ hallSummary.free }}</strong
+        可用空座 <strong class="mono">{{ hallSummary.free }}</strong
         ><span class="dim mono"> / {{ hallSummary.total }}</span>
       </span>
       <div class="lib-tabs" role="tablist" aria-label="分馆筛选">
@@ -173,7 +178,7 @@ async function submitFeedback(text: string) {
         :style="{ animationDelay: `${i * 50}ms` }"
       >
         <span class="rank-no mono">{{ String(i + 1).padStart(2, "0") }}</span>
-        <span v-if="i === 0" class="rec-badge">推荐</span>
+        <span v-if="i === 0 && r.avg_occupancy_rate < 1 && r.free_now !== 0" class="rec-badge">推荐</span>
         <div class="rank-main">
           <button
             type="button"
@@ -183,7 +188,7 @@ async function submitFeedback(text: string) {
           >
             <span class="area-name">{{ r.area_name.replace(/\s*\d+\/\d+\s*$/, "") }}</span>
             <span class="rank-head-right">
-              <span v-if="r.free_now != null" class="free mono">当前空 {{ r.free_now }}/{{ r.total }}</span>
+              <span v-if="r.free_now != null" class="free mono">可用 {{ r.free_now }}/{{ r.total }}</span>
               <span v-if="r.map_id" class="map-hint">{{ expandedMap === r.area_name ? "收起地图 ▴" : "座位平面图 ▾" }}</span>
             </span>
           </button>
@@ -195,6 +200,7 @@ async function submitFeedback(text: string) {
             ></div>
           </div>
           <p v-if="r.samples < 4" class="low-samples">历史样本少（{{ r.samples }} 次），预测置信度低</p>
+          <p v-if="r.preference_reason" class="preference-note">{{ r.preference_reason }}</p>
           <!-- 座位平面图下钻 -->
           <SeatMapPanel
             v-if="expandedMap === r.area_name && r.map_id"
@@ -229,6 +235,7 @@ async function submitFeedback(text: string) {
 </template>
 
 <style scoped>
+.preference-note { color: var(--color-teal); font-size: 12px; }
 .page-head {
   text-align: center;
   margin-bottom: 2rem;

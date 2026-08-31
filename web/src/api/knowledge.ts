@@ -1,6 +1,8 @@
 import { http, unwrap } from "./client";
 
 export interface GraphNode {
+  preference_score?: number;
+  preference_reason?: string;
   paperId: string;
   title?: string;
   year?: number;
@@ -15,6 +17,7 @@ export interface GraphEdge {
 }
 
 export interface CitationGraph {
+  personalization?: { applied: boolean; note: string; memory_ids: string[] };
   nodes: GraphNode[];
   edges: GraphEdge[];
   maxDepth?: number;

@@ -164,7 +164,7 @@ function renderChart(g: CitationGraph) {
         if (!node) return params.name ?? "";
         const level = node.depth === 0 ? "当前论文" : `第 ${node.depth} 层引用`;
         const citations = node.citationCount == null ? "被引量：暂无数据" : `被引量：${node.citationCount.toLocaleString()}`;
-        return `${node.title ?? node.paperId}${node.year ? `\n${node.year}` : ""}\n${citations}\n${level}`;
+        return `${node.title ?? node.paperId}${node.year ? `\n${node.year}` : ""}\n${citations}\n${level}${node.preference_reason ? `\n偏好：${node.preference_reason}` : ""}`;
       },
     },
     series: [
@@ -189,8 +189,8 @@ function renderChart(g: CitationGraph) {
           name: i === 0 ? `你在这里 · ${activeTitle.value || n.title || "当前论文"}` : n.title ?? n.paperId,
           // 中心是坐标钉；第二层缩小并弱化，避免大图喧宾夺主。
           symbol: i === 0 ? "pin" : "circle",
-          symbolSize: i === 0 ? 42 : n.depth === 2 ? 8 : 13,
-          label: { show: i === 0 || n.depth !== 2 },
+          symbolSize: i === 0 ? 42 : (n.preference_score ?? 0) > 0 ? 18 : n.depth === 2 ? 8 : 13,
+          label: { show: i === 0 || (n.preference_score ?? 0) > 0 || n.depth !== 2 },
           itemStyle:
             i === 0
               ? {
@@ -199,7 +199,7 @@ function renderChart(g: CitationGraph) {
                   shadowBlur: 14,
                   shadowColor: "rgba(15, 92, 92, 0.45)",
                 }
-              : { color: citationColor(n.citationCount) },
+              : { color: citationColor(n.citationCount), borderColor: (n.preference_score ?? 0) > 0 ? "#2c5f5d" : "transparent", borderWidth: (n.preference_score ?? 0) > 0 ? 3 : 0 },
         })),
         // 引用 = 航路: 虚线
         links: g.edges.map((e) => ({
@@ -295,6 +295,7 @@ async function submitFeedback(text: string) {
         <span class="drill-hint">点击城邦航行至该处</span>
       </p>
 
+      <p v-if="graph.personalization" class="preference-note" role="status">{{ graph.personalization.note }}</p>
       <!-- 桌面: 图纸化力导向图 -->
       <div v-if="!isMobile" class="chart-frame">
         <div ref="chartContainer" class="chart" aria-label="论文引用关系图"></div>
@@ -312,6 +313,7 @@ async function submitFeedback(text: string) {
           <span class="lg"><i class="lg-pin"></i>你在这里</span>
           <span class="lg citation-scale"><span>低被引</span><i></i><span>高被引</span></span>
           <span class="lg"><i class="lg-unknown"></i>暂无数据</span>
+          <span v-if="graph.personalization?.applied" class="lg">◎ 偏好匹配</span>
           <span class="lg"><i class="lg-route"></i>引用航路</span>
         </div>
       </div>
@@ -320,7 +322,7 @@ async function submitFeedback(text: string) {
       <ul v-else class="node-list">
         <li v-for="n in graph.nodes.slice(1)" :key="n.paperId">
           <button type="button" class="node-link" @click="drill(n.paperId, n.title)">
-            <span class="node-title">{{ n.title ?? n.paperId }}</span>
+            <span class="node-title">{{ n.title ?? n.paperId }}<small v-if="n.preference_reason"> · {{ n.preference_reason }}</small></span>
             <span v-if="n.year" class="node-year mono">{{ n.year }}</span>
           </button>
         </li>
@@ -375,6 +377,7 @@ async function submitFeedback(text: string) {
 </template>
 
 <style scoped>
+.preference-note { color: var(--color-teal); font-size: 12px; line-height: 1.6; }
 .page-head {
   text-align: center;
   margin-bottom: 2rem;

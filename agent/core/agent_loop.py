@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import secrets
 import time
+from agent.core.personalization import personalize, scope_for, belongs
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -76,6 +77,11 @@ class AgentLoop:
         handler = self._tools[tool_name]
         output = await self._invoke(handler, tool_args)
 
+        if tool_name in ("build_citation_graph", "predict_seats"):
+            output = personalize(output, feature, memories)
+            if isinstance(output, dict):
+                plan_note = output.get("personalization", {}).get("note", "")
+
         # 4) 组装结果
         elapsed_ms = (time.perf_counter() - start) * 1000
         return AgentResult(
@@ -106,7 +112,8 @@ class AgentLoop:
         trace_id = trace_id or self._new_trace_id()  # 透传/新建，供日志串联（本层暂无日志出口）
 
         # 幂等：按 user_id + 反馈内容 hash 去重，防手快多点 / 网络重试重复入库
-        feedback_hash = hashlib.sha1(f"{user_id}\x00{feedback}".encode("utf-8")).hexdigest()
+        scope = scope_for(task_context)
+        feedback_hash = hashlib.sha1(f"{user_id}\x00{scope}\x00{feedback}".encode("utf-8")).hexdigest()
         existing = self.store.get_feedback_entry_ids(feedback_hash)
         if existing is not None:
             return existing
@@ -115,16 +122,21 @@ class AgentLoop:
         # 把该用户已有记忆交给 extractor 判定矛盾,只降权被点名的——
         # "喜欢靠窗"和"喜欢安静"不矛盾,不能互相降权。
         # 不带 subject 过滤: 记忆主题由 extractor 归纳,与 task_context 前缀常不一致
-        existing = self.store.query(user_id)[:10]
+        existing = [e for e in self.store.query(user_id) if belongs(e, scope)][:10]
         entries = await self.extractor.extract(
             feedback, user_id=user_id, subject=subject, source=feedback,
             task_context=task_context, existing=existing,
         )
         new_ids = []
         for e in entries:
+            e.applies_to = scope
+            e.dedup_hash = hashlib.sha1(f"{user_id}\x00{scope}\x00{e.content}".encode("utf-8")).hexdigest()
             eid = self.store.add(e)
             new_ids.append(eid)
+        allowed_conflicts = {e.entry_id for e in existing}
         for cid in getattr(self.extractor, "last_contradicts", []):
+            if cid not in allowed_conflicts:
+                continue
             self.store.adjust_confidence(cid, factor=0.5)
         self.store.set_feedback_entry_ids(feedback_hash, new_ids)
         return new_ids
