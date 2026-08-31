@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { echarts, type ECharts } from "../charts";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   buildGraph,
   searchPapers,
@@ -25,6 +25,25 @@ const summary = ref<PaperSummary | null>(null);
 const chartContainer = ref<HTMLDivElement | null>(null);
 const feedbackOpen = ref(false);
 let chart: ECharts | null = null;
+let chartResizeObserver: ResizeObserver | null = null;
+let graphRequest = 0;
+
+function disposeChart() {
+  chartResizeObserver?.disconnect();
+  chartResizeObserver = null;
+  chart?.dispose();
+  chart = null;
+}
+
+// v-if creates a new container after loading; initialize only once it exists.
+watch([chartContainer, graph], ([container, data]) => {
+  disposeChart();
+  if (!container || !data?.nodes.length) return;
+  renderChart(data);
+  chartResizeObserver = new ResizeObserver(() => chart?.resize());
+  chartResizeObserver.observe(container);
+}, { flush: "post" });
+onBeforeUnmount(() => { graphRequest++; disposeChart(); });
 
 // 关键词找论文(不知道 paperId 的入口)
 const showSearch = ref(false);
@@ -77,12 +96,14 @@ const abstractParas = computed(() =>
 async function loadGraph(targetId?: string) {
   const id = (targetId ?? paperId.value).trim();
   if (!id) return;
+  const request = ++graphRequest;
   loading.value = true;
   errorMessage.value = "";
   summary.value = null;
   graph.value = null;
   try {
     const g = await buildGraph(id);
+    if (request !== graphRequest) return;
     if (g.error) {
       errorMessage.value = g.error;
       return;
@@ -90,27 +111,62 @@ async function loadGraph(targetId?: string) {
     graph.value = g;
     activePaperId.value = id;
     inkDrop();
-    await nextTick();
-    renderChart(g);
+    loading.value = false; // Mount the graph without waiting for the independent summary.
     // 摘要独立加载, 失败不影响图
     try {
       const s = await summarizePaper(id);
-      if (!s.error) summary.value = s;
+      if (request === graphRequest && !s.error) summary.value = s;
     } catch {
       /* 摘要降级缺失不阻塞 */
     }
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : "出了点问题，请稍后再试";
+    if (request === graphRequest) errorMessage.value = err instanceof Error ? err.message : "出了点问题，请稍后再试";
   } finally {
-    loading.value = false;
+    if (request === graphRequest) loading.value = false;
   }
 }
 
 function renderChart(g: CitationGraph) {
   if (isMobile.value || !chartContainer.value || !g.nodes.length) return;
+  // loading 分支会销毁并重建容器；旧实例不能复用到新的 DOM。
+  if (chart && chart.getDom() !== chartContainer.value) {
+    chart.dispose();
+    chart = null;
+  }
   if (!chart) chart = echarts.init(chartContainer.value);
+  const citationLogs = g.nodes
+    .map((node) => node.citationCount)
+    .filter((count): count is number => typeof count === "number" && count >= 0)
+    .map((count) => Math.log1p(count));
+  const minCitationLog = citationLogs.length ? Math.min(...citationLogs) : 0;
+  const maxCitationLog = citationLogs.length ? Math.max(...citationLogs) : 1;
+  const citationColor = (count?: number) => {
+    if (count == null || count < 0) return "#aaa9a2";
+    const value = Math.log1p(count);
+    const ratio = maxCitationLog === minCitationLog
+      ? 0.5
+      : (value - minCitationLog) / (maxCitationLog - minCitationLog);
+    const light = [253, 232, 230];
+    const dark = [143, 29, 24];
+    const rgb = light.map((channel, index) =>
+      Math.round(channel + (dark[index] - channel) * ratio)
+    );
+    return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+  };
   chart.setOption({
     animationDuration: 400,
+    tooltip: {
+      trigger: "item",
+      renderMode: "richText",
+      formatter: (params: any) => {
+        if (params.dataType !== "node") return "引用关系";
+        const node = g.nodes.find((item) => item.paperId === params.data?.id);
+        if (!node) return params.name ?? "";
+        const level = node.depth === 0 ? "当前论文" : `第 ${node.depth} 层引用`;
+        const citations = node.citationCount == null ? "被引量：暂无数据" : `被引量：${node.citationCount.toLocaleString()}`;
+        return `${node.title ?? node.paperId}${node.year ? `\n${node.year}` : ""}\n${citations}\n${level}`;
+      },
+    },
     series: [
       {
         type: "graph",
@@ -118,37 +174,42 @@ function renderChart(g: CitationGraph) {
         roam: true, // 滚轮缩放 + 拖拽平移
         force: { repulsion: 220, edgeLength: 90 },
         // hover 时无关节点降至低透明度, 仅高亮关联航路
-        emphasis: { focus: "adjacency", lineStyle: { color: "#2c5f5d", width: 2, type: "solid" } },
+        emphasis: { focus: "adjacency", lineStyle: { color: "#0f5c5c", width: 2, type: "solid" } },
         label: {
           show: true,
           position: "right",
           fontSize: 11,
           fontFamily: "Inter, sans-serif",
-          color: "#3a3a36",
+          color: "#4a4a46",
           overflow: "truncate",
           width: 130,
         },
         data: g.nodes.map((n, i) => ({
           id: n.paperId,
-          name: i === 0 ? `你在这里 · ${activeTitle.value || "当前论文"}` : n.title ?? n.paperId,
-          // 中心是坐标钉, 其余是城邦
+          name: i === 0 ? `你在这里 · ${activeTitle.value || n.title || "当前论文"}` : n.title ?? n.paperId,
+          // 中心是坐标钉；第二层缩小并弱化，避免大图喧宾夺主。
           symbol: i === 0 ? "pin" : "circle",
-          symbolSize: i === 0 ? 30 : 12,
+          symbolSize: i === 0 ? 42 : n.depth === 2 ? 8 : 13,
+          label: { show: i === 0 || n.depth !== 2 },
           itemStyle:
             i === 0
               ? {
-                  color: "#2c5f5d",
+                  color: "#0f5c5c",
                   // 中心光晕用 box-shadow, 不用 filter: blur(防性能问题)
                   shadowBlur: 14,
-                  shadowColor: "rgba(44, 95, 93, 0.45)",
+                  shadowColor: "rgba(15, 92, 92, 0.45)",
                 }
-              : { color: "#1c1c1a" },
+              : { color: citationColor(n.citationCount) },
         })),
         // 引用 = 航路: 虚线
         links: g.edges.map((e) => ({
           source: e.source,
           target: e.target,
-          lineStyle: { color: "#8b8b84", width: 1, type: "dashed" },
+          lineStyle: {
+            color: e.depth === 2 ? "#b7b7af" : "#8a8a82",
+            width: e.depth === 2 ? 0.75 : 1,
+            type: "dashed",
+          },
         })),
       },
     ],
@@ -230,7 +291,7 @@ async function submitFeedback(text: string) {
       <p class="graph-meta">
         <span class="mono">{{ activePaperId }}</span>
         <span v-if="activeTitle" class="graph-title">· {{ activeTitle }}</span>
-        · {{ graph.nodes.length - 1 }} 条航路
+        · {{ graph.nodes.length - 1 }} 个关联节点 · {{ graph.edges.length }} 条航路 · 两层引用
         <span class="drill-hint">点击城邦航行至该处</span>
       </p>
 
@@ -249,7 +310,8 @@ async function submitFeedback(text: string) {
         <!-- 图例 -->
         <div class="map-legend" aria-hidden="true">
           <span class="lg"><i class="lg-pin"></i>你在这里</span>
-          <span class="lg"><i class="lg-city"></i>引用文献</span>
+          <span class="lg citation-scale"><span>低被引</span><i></i><span>高被引</span></span>
+          <span class="lg"><i class="lg-unknown"></i>暂无数据</span>
           <span class="lg"><i class="lg-route"></i>引用航路</span>
         </div>
       </div>
@@ -488,6 +550,20 @@ async function submitFeedback(text: string) {
   height: 8px;
   border-radius: 50%;
   background: var(--color-ink);
+}
+
+.lg-unknown {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #aaa9a2;
+}
+
+.citation-scale i {
+  width: 48px;
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #fde8e6, #8f1d18);
 }
 
 .lg-route {

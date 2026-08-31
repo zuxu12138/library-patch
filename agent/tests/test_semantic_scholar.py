@@ -50,6 +50,21 @@ async def test_references_flattens_cited_paper(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_references_treats_null_data_and_invalid_items_as_empty(monkeypatch):
+    responses = iter([
+        {"data": None},
+        {"data": [None, {"citedPaper": None}, {"citedPaper": {"title": "missing id"}}]},
+    ])
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=next(responses))
+
+    client = _client(handler, monkeypatch)
+    assert await client.references("p1") == []
+    assert await client.references("p2") == []
+
+
+@pytest.mark.asyncio
 async def test_429_retries_then_succeeds(monkeypatch):
     calls = {"count": 0}
 

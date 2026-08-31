@@ -14,7 +14,11 @@ class _StubS2Client:
 
     async def references(self, paper_id, limit=20):
         self.reference_calls.append(paper_id)
-        return self.references_result
+        if paper_id == "p1":
+            return self.references_result
+        if paper_id == "p2":
+            return [{"paperId": "p3", "title": "C"}]
+        return []
 
     async def paper(self, paper_id):
         self.paper_calls.append(paper_id)
@@ -39,7 +43,9 @@ async def test_build_graph_calls_agent_loop_with_build_citation_graph_tool(tmp_p
     assert {"paperId": "p2", "title": "B"} in [
         {"paperId": n["paperId"], "title": n["title"]} for n in result.output["nodes"][1:]
     ]
-    assert s2.reference_calls == ["p1"]
+    assert result.output["maxDepth"] == 2
+    assert {"source": "p2", "target": "p3", "depth": 2} in result.output["edges"]
+    assert s2.reference_calls == ["p1", "p2"]
 
 
 @pytest.mark.asyncio
@@ -52,7 +58,7 @@ async def test_build_graph_uses_cache_on_second_call(tmp_path):
     await service.build_graph("p1", user_id="u1", trace_id="t1")
     await service.build_graph("p1", user_id="u1", trace_id="t2")
 
-    assert s2.reference_calls == ["p1"]  # 第二次命中缓存，不再打 S2
+    assert s2.reference_calls == ["p1", "p2"]  # 第二次全部命中缓存，不再打 S2
 
 
 @pytest.mark.asyncio
